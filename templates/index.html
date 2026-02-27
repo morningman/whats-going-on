@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Email Watcher</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>Email Watcher</h1>
+      <nav>
+        <a href="/" class="active">Digest</a>
+        <a href="/settings">Settings</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="controls">
+      <select id="list-select">
+        <option value="">-- Select mailing list --</option>
+      </select>
+      <input type="date" id="date-picker">
+      <button class="btn btn-primary" id="btn-load">Load Emails</button>
+      <button class="btn btn-primary" id="btn-digest" disabled>Generate Digest</button>
+    </div>
+
+    <div id="status-bar" class="status hidden"></div>
+
+    <div id="digest-section" class="card hidden">
+      <h2>Daily Digest</h2>
+      <div id="digest-content" class="digest-content"></div>
+    </div>
+
+    <div id="emails-section" class="card hidden">
+      <h2>Emails (<span id="email-count">0</span>)</h2>
+      <div id="email-list"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Settings - Email Watcher</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>Email Watcher</h1>
+      <nav>
+        <a href="/">Digest</a>
+        <a href="/settings" class="active">Settings</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="container">
+    <div id="status-bar" class="status hidden"></div>
+
+    <!-- LLM Config -->
+    <div class="card">
+      <h2>LLM Configuration</h2>
+      <div class="form-group">
+        <label for="llm-api-key">Claude API Key</label>
+        <input type="password" id="llm-api-key" placeholder="sk-ant-...">
+      </div>
+      <div class="form-group">
+        <label for="llm-model">Model</label>
+        <input type="text" id="llm-model" value="claude-sonnet-4-20250514">
+      </div>
+    </div>
+
+    <!-- Mailing Lists -->
+    <div class="card">
+      <h2>Mailing Lists</h2>
+      <div id="lists-container"></div>
+
+      <h3 style="margin-top:16px; font-size:1rem;">Add New List</h3>
+      <div class="form-group">
+        <label for="new-list-name">Display Name</label>
+        <input type="text" id="new-list-name" placeholder="Apache Doris Dev">
+      </div>
+      <div class="form-group">
+        <label for="new-list-type">Type</label>
+        <select id="new-list-type">
+          <option value="ponymail">Pony Mail (Apache)</option>
+          <option value="pipermail">Pipermail (Mailman 2)</option>
+        </select>
+      </div>
+
+      <!-- Pony Mail fields -->
+      <div id="ponymail-fields">
+        <div class="form-group">
+          <label for="pm-base-url">Base URL</label>
+          <input type="text" id="pm-base-url" value="https://lists.apache.org">
+        </div>
+        <div class="form-group">
+          <label for="pm-list">List Name</label>
+          <input type="text" id="pm-list" placeholder="dev">
+        </div>
+        <div class="form-group">
+          <label for="pm-domain">Domain</label>
+          <input type="text" id="pm-domain" placeholder="doris.apache.org">
+        </div>
+      </div>
+
+      <!-- Pipermail fields -->
+      <div id="pipermail-fields" class="hidden">
+        <div class="form-group">
+          <label for="pip-base-url">Archive URL</label>
+          <input type="text" id="pip-base-url" placeholder="https://mail.python.org/pipermail/python-dev">
+        </div>
+      </div>
+
+      <div style="display:flex; gap:8px; margin-top:12px;">
+        <button class="btn btn-secondary" id="btn-test">Test Connection</button>
+        <button class="btn btn-primary" id="btn-add-list">Add List</button>
+      </div>
+    </div>
+
+    <!-- Save -->
+    <button class="btn btn-primary" id="btn-save" style="margin-top:8px;">Save All Settings</button>
+  </div>
+
+  <script src="/static/settings.js"></script>
+</body>
+</html>

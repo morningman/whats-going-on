@@ -1,0 +1,20 @@
+{
+  "mailing_lists": [
+    {
+      "id": "doris-dev",
+      "name": "Apache Doris Dev",
+      "type": "ponymail",
+      "config": {
+        "base_url": "https://lists.apache.org",
+        "list": "dev",
+        "domain": "doris.apache.org"
+      }
+    }
+  ],
+  "llm": {
+    "provider": "claude",
+    "api_key": "",
+    "model": "claude-sonnet-4-20250514"
+  },
+  "fetch_days": 7
+}
