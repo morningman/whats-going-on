@@ -274,3 +274,136 @@ def generate_digest(
     save_digest(list_id, date, digest)
     logger.info("Digest generation complete for list=%s, date=%s", list_id, date)
     return digest
+
+
+# --- Daily Summary (one-click, all lists, multi-day) ---
+
+DAILY_SUMMARY_DIR = os.path.join(os.path.dirname(__file__), "data", "daily_summaries")
+
+
+def _daily_summary_path(trigger_date: str) -> str:
+    os.makedirs(DAILY_SUMMARY_DIR, exist_ok=True)
+    return os.path.join(DAILY_SUMMARY_DIR, f"daily_summary_{trigger_date}.json")
+
+
+def load_daily_summary(trigger_date: str) -> dict | None:
+    """Load cached daily summary if it exists."""
+    path = _daily_summary_path(trigger_date)
+    if os.path.exists(path):
+        logger.debug("Loading cached daily summary: %s", path)
+        with open(path, "r") as f:
+            return json.load(f)
+    return None
+
+
+def save_daily_summary(trigger_date: str, result: dict):
+    """Save daily summary to cache."""
+    path = _daily_summary_path(trigger_date)
+    with open(path, "w") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    logger.info("Daily summary saved to cache: %s", path)
+
+
+def _build_daily_summary_prompt(all_data: dict, dates: list[str]) -> str:
+    """Build the prompt for daily summary across all lists and dates.
+
+    Args:
+        all_data: {list_name: {date: [emails]}}
+        dates: sorted list of date strings
+    """
+    sections = ""
+    total_emails = 0
+
+    for list_name, date_map in all_data.items():
+        sections += f"\n\n## 邮件组: {list_name}\n"
+        for date in dates:
+            emails = date_map.get(date, [])
+            if not emails:
+                sections += f"\n### {date}: 无邮件\n"
+                continue
+            total_emails += len(emails)
+            threads = _organize_threads(emails)
+            sections += f"\n### {date} ({len(emails)} 封邮件, {len(threads)} 个讨论主题)\n"
+            for i, thread in enumerate(threads, 1):
+                sections += f"\n#### 主题 {i}: {thread['subject']}\n"
+                for msg in thread["messages"]:
+                    body = msg["body"][:1500]  # Truncate to save tokens
+                    sections += f"\n发件人: {msg['from']}\n{body}\n---\n"
+
+    return f"""你是一个邮件摘要助手。请对以下来自多个邮件组的最近{len(dates)}天的邮件进行汇总分析。
+
+**请务必使用中文输出摘要。**
+
+请按以下结构输出 Markdown 格式的摘要：
+
+1. **总体概况**：用 2-3 句话概括这几天各邮件组的整体活动情况
+2. **按邮件组分组摘要**：对每个邮件组，按日期列出关键讨论、重要决定和进展
+3. **重要行动项**：列出所有需要关注的决定、待办事项、提交的补丁等
+4. **值得关注的亮点**：特别重要或有趣的讨论要点
+
+日期范围: {dates[0]} 至 {dates[-1]}
+邮件总数: {total_emails}
+
+---
+{sections}"""
+
+
+def generate_daily_summary(
+    all_data: dict,
+    dates: list[str],
+    llm_config: dict,
+    trigger_date: str,
+) -> dict:
+    """Generate a daily summary across all mailing lists for the given dates.
+
+    Args:
+        all_data: {list_name: {date: [emails]}}
+        dates: sorted list of date strings (e.g. last 3 days)
+        llm_config: The full 'llm' section from config
+        trigger_date: today's date, used for caching
+
+    Returns {"summary": str, "generated_at": str, "statistics": dict}
+    """
+    # Check cache first
+    cached = load_daily_summary(trigger_date)
+    if cached:
+        logger.info("Returning cached daily summary for %s", trigger_date)
+        return cached
+
+    # Compute statistics
+    stats = {}
+    total_emails = 0
+    for list_name, date_map in all_data.items():
+        list_total = sum(len(emails) for emails in date_map.values())
+        stats[list_name] = list_total
+        total_emails += list_total
+
+    if total_emails == 0:
+        logger.info("No emails found across all lists for dates %s", dates)
+        return {
+            "summary": "在所选日期范围内未找到任何邮件。",
+            "generated_at": "",
+            "statistics": stats,
+            "dates": dates,
+            "total_emails": 0,
+        }
+
+    logger.info(
+        "Generating daily summary — dates=%s, lists=%d, total_emails=%d",
+        dates, len(all_data), total_emails,
+    )
+    provider = _get_active_provider(llm_config)
+    prompt = _build_daily_summary_prompt(all_data, dates)
+    summary_text = _call_llm(prompt, provider)
+
+    result = {
+        "summary": summary_text,
+        "generated_at": datetime.now().isoformat(),
+        "statistics": stats,
+        "dates": dates,
+        "total_emails": total_emails,
+    }
+
+    save_daily_summary(trigger_date, result)
+    logger.info("Daily summary generation complete for %s", trigger_date)
+    return result

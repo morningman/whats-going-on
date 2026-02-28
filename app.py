@@ -6,6 +6,7 @@ import logging
 import logging.handlers
 import os
 import sys
+from datetime import datetime, timedelta
 
 from flask import Flask, jsonify, render_template, request
 
@@ -288,6 +289,111 @@ def api_digest():
     except Exception as e:
         logger.exception("POST /api/digest — error generating digest for %s on %s", list_id, date)
         return jsonify({"error": str(e)}), 500
+
+
+# --- Daily Summary API ---
+
+
+@app.route("/api/daily-summary", methods=["GET", "POST"])
+def api_daily_summary():
+    """One-click daily summary across all mailing lists for the last 3 days."""
+    config = load_config()
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    if request.method == "GET":
+        logger.debug("GET /api/daily-summary")
+        cached = summarizer.load_daily_summary(today)
+        if cached:
+            return jsonify(cached)
+        return jsonify({"summary": None, "total_emails": 0})
+
+    # POST — generate new daily summary
+    logger.info("POST /api/daily-summary — generating daily summary")
+
+    # --- Pre-checks ---
+    errors = []
+
+    # 1. Check LLM configuration
+    llm_config = config.get("llm", {})
+    try:
+        provider = summarizer._get_active_provider(llm_config)
+        if not provider.get("auth_token", ""):
+            errors.append("LLM 认证令牌未配置。请在设置页面配置 LLM Provider 的 Auth Token。")
+    except ValueError as e:
+        errors.append(str(e))
+
+    # 2. Check mailing lists exist
+    mailing_lists = config.get("mailing_lists", [])
+    if not mailing_lists:
+        errors.append("未配置任何邮件组。请在设置页面添加至少一个邮件组。")
+
+    # 3. Check private list authentication
+    private_lists_without_auth = []
+    for ml in mailing_lists:
+        if ml.get("private", False):
+            cookie = _get_cookie_for_list(config, ml)
+            if not cookie:
+                private_lists_without_auth.append(ml["name"])
+
+    if private_lists_without_auth:
+        errors.append(
+            f"以下私有邮件组需要 ASF 认证: {', '.join(private_lists_without_auth)}。"
+            f"这些邮件组将被跳过，或请先在设置页面完成 ASF 登录。"
+        )
+
+    # If critical errors (no LLM or no lists), return immediately
+    if not mailing_lists or (llm_config and not llm_config.get("providers")):
+        if errors:
+            logger.warning("POST /api/daily-summary — pre-check failed: %s", errors)
+            return jsonify({"error": " | ".join(errors)}), 400
+
+    # --- Fetch emails for last 3 days ---
+    dates = []
+    for i in range(3):
+        d = datetime.now() - timedelta(days=i)
+        dates.append(d.strftime("%Y-%m-%d"))
+    dates.sort()  # oldest first
+
+    all_data = {}  # {list_name: {date: [emails]}}
+    skipped_lists = []
+
+    for ml in mailing_lists:
+        # Skip private lists without auth
+        if ml.get("private", False):
+            cookie = _get_cookie_for_list(config, ml)
+            if not cookie:
+                skipped_lists.append(ml["name"])
+                continue
+        else:
+            cookie = _get_cookie_for_list(config, ml)
+
+        list_name = ml["name"]
+        list_data = {}
+        try:
+            fetcher = get_fetcher(ml["type"])
+            for date in dates:
+                logger.info("Fetching emails for %s on %s", list_name, date)
+                emails = fetcher.fetch_emails(ml["config"], date, cookie=cookie)
+                list_data[date] = emails
+                logger.info("Fetched %d emails for %s on %s", len(emails), list_name, date)
+        except Exception as e:
+            logger.exception("Error fetching emails for %s", list_name)
+            list_data = {date: [] for date in dates}
+
+        all_data[list_name] = list_data
+
+    # --- Generate summary ---
+    try:
+        result = summarizer.generate_daily_summary(all_data, dates, llm_config, today)
+        if skipped_lists:
+            result["skipped_lists"] = skipped_lists
+        if errors:
+            result["warnings"] = errors
+        logger.info("POST /api/daily-summary — done, total_emails=%d", result.get("total_emails", 0))
+        return jsonify(result)
+    except Exception as e:
+        logger.exception("POST /api/daily-summary — error generating summary")
+        return jsonify({"error": f"生成摘要时出错: {str(e)}"}), 500
 
 
 # --- ASF Authentication API ---
