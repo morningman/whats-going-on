@@ -453,3 +453,267 @@ kbd {
   margin-bottom: 6px;
   border-left: 3px solid #f59e0b;
 }
+
+/* Tab navigation */
+.ds-tabs {
+  margin-top: 4px;
+}
+
+.ds-tab-nav {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid #e2e8f0;
+  margin-bottom: 0;
+  overflow-x: auto;
+}
+
+.ds-tab-btn {
+  padding: 10px 20px;
+  border: none;
+  background: transparent;
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: #718096;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.2s, border-color 0.2s;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ds-tab-btn:hover {
+  color: #4a5568;
+}
+
+.ds-tab-btn.active {
+  color: #2b6cb0;
+  border-bottom-color: #3182ce;
+  font-weight: 600;
+}
+
+.ds-tab-count {
+  display: inline-block;
+  background: #e2e8f0;
+  color: #4a5568;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.ds-tab-btn.active .ds-tab-count {
+  background: #bee3f8;
+  color: #2b6cb0;
+}
+
+/* Tab panels */
+.ds-tab-panel {
+  padding: 16px 0;
+}
+
+/* Overview section */
+.ds-overview {
+  margin-bottom: 20px;
+}
+
+.ds-section-label {
+  font-size: 0.95rem;
+  color: #2d3748;
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+.ds-overview-content {
+  background: #f7fafc;
+  border-left: 3px solid #3182ce;
+  padding: 14px 16px;
+  border-radius: 0 6px 6px 0;
+  line-height: 1.7;
+}
+
+/* Day toggle buttons */
+.ds-day-section {
+  margin-top: 8px;
+}
+
+.ds-day-btns {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.ds-day-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 20px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 120px;
+}
+
+.ds-day-btn:hover {
+  border-color: #3182ce;
+  background: #ebf8ff;
+}
+
+.ds-day-btn.active {
+  border-color: #3182ce;
+  background: #ebf8ff;
+  box-shadow: 0 2px 6px rgba(49, 130, 206, 0.15);
+}
+
+.ds-day-date {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #2d3748;
+}
+
+.ds-day-count {
+  font-size: 0.78rem;
+  color: #718096;
+  margin-top: 2px;
+}
+
+.ds-day-btn.active .ds-day-date {
+  color: #2b6cb0;
+}
+
+/* Day detail panels */
+.ds-day-detail {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 8px;
+  animation: fadeIn 0.2s ease;
+}
+
+.ds-day-detail h4 {
+  font-size: 0.95rem;
+  color: #2d3748;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #edf2f7;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Time range selector (segmented control) */
+.ds-range-selector {
+  display: inline-flex;
+  border: 1px solid #cbd5e0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f7fafc;
+}
+
+.ds-range-btn {
+  padding: 7px 16px;
+  border: none;
+  background: transparent;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: #718096;
+  cursor: pointer;
+  transition: all 0.2s;
+  border-right: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+
+.ds-range-btn:last-child {
+  border-right: none;
+}
+
+.ds-range-btn:hover {
+  background: #edf2f7;
+  color: #4a5568;
+}
+
+.ds-range-btn.active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* Email links in daily detail panels */
+.ds-email-links {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.ds-email-links-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #4a5568;
+  margin-bottom: 8px;
+}
+
+.ds-email-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.ds-email-link-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: background 0.15s;
+  flex-wrap: wrap;
+}
+
+.ds-email-link-item:hover {
+  background: #f0f5ff;
+}
+
+.ds-email-link {
+  color: #2b6cb0;
+  text-decoration: none;
+  font-size: 0.88rem;
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ds-email-link:hover {
+  color: #1a4d8f;
+  text-decoration: underline;
+}
+
+.ds-email-nolink {
+  color: #4a5568;
+  font-size: 0.88rem;
+  font-weight: 500;
+  flex: 1;
+}
+
+.ds-email-from {
+  color: #a0aec0;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}

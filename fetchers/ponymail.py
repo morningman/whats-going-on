@@ -90,6 +90,48 @@ class PonyMailFetcher(BaseFetcher):
         logger.info("[PonyMail] %d emails match date %s", len(result), date)
         return result
 
+    def fetch_permalink_map(self, config: dict, year_month: str, cookie: str = "") -> dict:
+        """Fetch PonyMail mid hashes for a given month via the stats API.
+
+        Returns a dict mapping raw Message-ID (without angle brackets)
+        to PonyMail permalink mid, e.g.:
+            {"CABxxx@mail.gmail.com": "qng54l2k714nrp..."}
+
+        The mid can be used to build a permalink:
+            https://lists.apache.org/thread/{mid}
+        """
+        list_name = config.get("list", "dev")
+        domain = config.get("domain", "")
+        base_url = config.get("base_url", "https://lists.apache.org")
+
+        url = f"{base_url}/api/stats.lua"
+        params = {
+            "list": list_name,
+            "domain": domain,
+            "d": year_month,
+            "emailsOnly": "true",
+        }
+
+        logger.info("[PonyMail] Fetching permalink map from %s for %s@%s %s", url, list_name, domain, year_month)
+        try:
+            resp = self._request_with_retry("GET", url, cookie, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            logger.exception("[PonyMail] Failed to fetch permalink map")
+            return {}
+
+        mid_map = {}
+        for em in data.get("emails", []):
+            raw_mid = em.get("message-id", "").strip("<>")
+            pony_mid = em.get("mid", "")
+            if raw_mid and pony_mid:
+                mid_map[raw_mid] = pony_mid
+
+        logger.info("[PonyMail] Built permalink map with %d entries", len(mid_map))
+        return mid_map
+
+
     def test_connection(self, config: dict, cookie: str = "") -> dict:
         """Test connection by hitting the stats API."""
         base_url = config.get("base_url", "https://lists.apache.org")

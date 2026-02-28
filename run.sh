@@ -112,8 +112,9 @@ do_start() {
         cd "$SCRIPT_DIR"
         export FLASK_APP=app.py
         nohup "$VENV_DIR/bin/python" -c "
-from app import app, setup_logging
+from app import app, setup_logging, auto_login_asf
 setup_logging('${LOG_DIR}')
+auto_login_asf()
 app.run(host='${HOST}', port=${PORT}, debug=False)
 " >> "$LOG_DIR/console.log" 2>&1 &
         echo $! > "$PID_FILE"

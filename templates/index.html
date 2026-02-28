@@ -23,11 +23,16 @@
     <!-- Daily Summary Section -->
     <div class="daily-summary-section">
       <div class="daily-summary-header">
-        <h2>📋 每日一键摘要</h2>
-        <p class="daily-summary-desc">一键汇总所有邮件组最近 3 天的邮件，生成中文摘要报告</p>
+        <h2>📋 汇总摘要</h2>
+        <p class="daily-summary-desc">一键汇总所有邮件组的邮件，生成中文摘要报告</p>
       </div>
       <div class="daily-summary-controls">
-        <button class="btn btn-daily-summary" id="btn-daily-summary">📋 生成每日摘要</button>
+        <div class="ds-range-selector" id="ds-range-selector">
+          <button class="ds-range-btn" data-days="1">最近 1 天</button>
+          <button class="ds-range-btn active" data-days="3">最近 3 天</button>
+          <button class="ds-range-btn" data-days="7">最近 7 天</button>
+        </div>
+        <button class="btn btn-daily-summary" id="btn-daily-summary">📋 生成摘要</button>
         <button class="btn btn-secondary btn-sm" id="btn-daily-summary-refresh" style="display:none;">🔄 重新生成</button>
       </div>
       <div id="daily-summary-status" class="status hidden"></div>

@@ -1,5 +1,7 @@
 {
   "asf_auth": {
+    "username": "",
+    "password": "",
     "cookie": ""
   },
   "mailing_lists": [

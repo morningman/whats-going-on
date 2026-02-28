@@ -113,7 +113,7 @@ def _migrate_config(config: dict) -> dict:
 
 
 def _mask_tokens(config: dict) -> dict:
-    """Mask auth tokens and cookies in config for safe API response."""
+    """Mask auth tokens, passwords, and cookies in config for safe API response."""
     safe = copy.deepcopy(config)
     for p in safe.get("llm", {}).get("providers", []):
         token = p.get("auth_token", "")
@@ -122,16 +122,21 @@ def _mask_tokens(config: dict) -> dict:
         elif token:
             p["auth_token"] = "***"
     # Mask centralized ASF auth cookie
-    cookie = safe.get("asf_auth", {}).get("cookie", "")
+    asf = safe.get("asf_auth", {})
+    cookie = asf.get("cookie", "")
     if cookie and len(cookie) > 12:
-        safe["asf_auth"]["cookie"] = cookie[:8] + "..." + cookie[-4:]
+        asf["cookie"] = cookie[:8] + "..." + cookie[-4:]
     elif cookie:
-        safe["asf_auth"]["cookie"] = "***"
+        asf["cookie"] = "***"
+    # Mask ASF password
+    password = asf.get("password", "")
+    if password:
+        asf["password"] = "***"
     return safe
 
 
 def _restore_masked_tokens(new_config: dict) -> dict:
-    """Restore masked auth tokens and cookies from existing saved config."""
+    """Restore masked auth tokens, passwords, and cookies from existing saved config."""
     if not os.path.exists(CONFIG_PATH):
         return new_config
     try:
@@ -152,9 +157,15 @@ def _restore_masked_tokens(new_config: dict) -> dict:
                 p["auth_token"] = old_p.get("auth_token", "")
 
     # Restore masked centralized ASF auth cookie
-    cookie = new_config.get("asf_auth", {}).get("cookie", "")
+    old_asf = old_config.get("asf_auth", {})
+    new_asf = new_config.get("asf_auth", {})
+    cookie = new_asf.get("cookie", "")
     if cookie and ("..." in cookie or cookie == "***"):
-        new_config["asf_auth"]["cookie"] = old_config.get("asf_auth", {}).get("cookie", "")
+        new_asf["cookie"] = old_asf.get("cookie", "")
+    # Restore masked ASF password
+    password = new_asf.get("password", "")
+    if password == "***":
+        new_asf["password"] = old_asf.get("password", "")
     return new_config
 
 
@@ -294,21 +305,41 @@ def api_digest():
 # --- Daily Summary API ---
 
 
-@app.route("/api/daily-summary", methods=["GET", "POST"])
+@app.route("/api/daily-summary", methods=["GET", "POST", "DELETE"])
 def api_daily_summary():
-    """One-click daily summary across all mailing lists for the last 3 days."""
+    """One-click daily summary across all mailing lists.
+
+    Accepts a 'days' query parameter (1, 3, or 7) to control the time range.
+    """
     config = load_config()
     today = datetime.now().strftime("%Y-%m-%d")
 
+    # Parse days parameter (default 3)
+    try:
+        num_days = int(request.args.get("days", "3"))
+    except ValueError:
+        num_days = 3
+    if num_days not in (1, 3, 7):
+        num_days = 3
+
+    # Cache key includes days count
+    cache_key = f"{today}__{num_days}d"
+
     if request.method == "GET":
-        logger.debug("GET /api/daily-summary")
-        cached = summarizer.load_daily_summary(today)
+        logger.debug("GET /api/daily-summary days=%d", num_days)
+        cached = summarizer.load_daily_summary(cache_key)
         if cached:
             return jsonify(cached)
-        return jsonify({"summary": None, "total_emails": 0})
+        return jsonify({"lists": None, "total_emails": 0})
+
+    if request.method == "DELETE":
+        logger.info("DELETE /api/daily-summary — clearing cache for %s", cache_key)
+        deleted = summarizer.delete_daily_summary(cache_key)
+        return jsonify({"ok": True, "deleted": deleted})
 
     # POST — generate new daily summary
-    logger.info("POST /api/daily-summary — generating daily summary")
+    force = request.args.get("force", "").lower() in ("1", "true", "yes")
+    logger.info("POST /api/daily-summary — generating daily summary (days=%d, force=%s)", num_days, force)
 
     # --- Pre-checks ---
     errors = []
@@ -347,14 +378,16 @@ def api_daily_summary():
             logger.warning("POST /api/daily-summary — pre-check failed: %s", errors)
             return jsonify({"error": " | ".join(errors)}), 400
 
-    # --- Fetch emails for last 3 days ---
+    # --- Fetch emails for last N days ---
     dates = []
-    for i in range(3):
+    for i in range(num_days):
         d = datetime.now() - timedelta(days=i)
         dates.append(d.strftime("%Y-%m-%d"))
     dates.sort()  # oldest first
 
     all_data = {}  # {list_name: {date: [emails]}}
+    # Also collect email metadata per list for linking
+    all_email_meta = {}  # {list_name: {date: [{id, subject, from, link}]}}
     skipped_lists = []
 
     for ml in mailing_lists:
@@ -369,22 +402,55 @@ def api_daily_summary():
 
         list_name = ml["name"]
         list_data = {}
+        list_meta = {}
+        base_url = ml.get("config", {}).get("base_url", "https://lists.apache.org")
         try:
             fetcher = get_fetcher(ml["type"])
+
+            # For PonyMail lists, fetch the permalink map (raw Message-ID → mid hash)
+            permalink_map = {}
+            if ml.get("type") == "ponymail":
+                year_months = sorted(set(d[:7] for d in dates))
+                for ym in year_months:
+                    pm = fetcher.fetch_permalink_map(ml["config"], ym, cookie=cookie)
+                    permalink_map.update(pm)
+
             for date in dates:
                 logger.info("Fetching emails for %s on %s", list_name, date)
                 emails = fetcher.fetch_emails(ml["config"], date, cookie=cookie)
                 list_data[date] = emails
+                # Build email metadata with correct PonyMail permalink links
+                day_meta = []
+                for em in emails:
+                    raw_id = em.get("id", "")
+                    link = ""
+                    if raw_id and ml.get("type") == "ponymail":
+                        pony_mid = permalink_map.get(raw_id, "")
+                        if pony_mid:
+                            link = f"{base_url}/thread/{pony_mid}"
+                    day_meta.append({
+                        "id": raw_id,
+                        "subject": em.get("subject", ""),
+                        "from": em.get("from", ""),
+                        "link": link,
+                    })
+                list_meta[date] = day_meta
                 logger.info("Fetched %d emails for %s on %s", len(emails), list_name, date)
         except Exception as e:
             logger.exception("Error fetching emails for %s", list_name)
             list_data = {date: [] for date in dates}
+            list_meta = {date: [] for date in dates}
 
         all_data[list_name] = list_data
+        all_email_meta[list_name] = list_meta
 
     # --- Generate summary ---
     try:
-        result = summarizer.generate_daily_summary(all_data, dates, llm_config, today)
+        result = summarizer.generate_daily_summary(
+            all_data, dates, llm_config, cache_key, force=force
+        )
+        # Attach email metadata to result for frontend linking
+        result["email_meta"] = all_email_meta
         if skipped_lists:
             result["skipped_lists"] = skipped_lists
         if errors:
@@ -491,7 +557,51 @@ def _get_cookie_for_list(config: dict, ml: dict) -> str:
     return ""
 
 
+def auto_login_asf():
+    """Auto-login to ASF if credentials are configured but cookie is missing or invalid.
+
+    This is called at startup so users don't need to manually log in through
+    the Settings page each time the app starts.
+    """
+    config = load_config()
+    asf_cfg = config.get("asf_auth", {})
+    username = asf_cfg.get("username", "")
+    password = asf_cfg.get("password", "")
+
+    if not username or not password:
+        logger.debug("[Auto-Login] No ASF credentials configured, skipping auto-login")
+        return
+
+    # Check if existing cookie is still valid
+    cookie = asf_cfg.get("cookie", "")
+    if cookie:
+        result = asf_auth.validate_cookie(cookie)
+        if result["ok"]:
+            logger.info(
+                "[Auto-Login] Existing ASF cookie is valid: %s (%s)",
+                result.get("fullname", ""), result.get("uid", ""),
+            )
+            return
+        logger.info("[Auto-Login] Existing ASF cookie is invalid/expired, re-logging in")
+
+    # Attempt login
+    logger.info("[Auto-Login] Attempting ASF login for user '%s'", username)
+    result = asf_auth.login(username, password)
+    if result["ok"] and result.get("cookie"):
+        config.setdefault("asf_auth", {})["cookie"] = result["cookie"]
+        save_config(config)
+        logger.info(
+            "[Auto-Login] ASF login successful: %s (%s) — cookie saved",
+            result.get("fullname", ""), result.get("uid", ""),
+        )
+    else:
+        logger.warning(
+            "[Auto-Login] ASF login failed: %s", result.get("message", "Unknown error")
+        )
+
+
 if __name__ == "__main__":
     setup_logging()
+    auto_login_asf()
     logger.info("Starting Email Watcher in development mode on port 5000")
     app.run(debug=True, port=5000)
