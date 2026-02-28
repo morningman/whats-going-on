@@ -1,7 +1,12 @@
 config.json
 data/
+log/
 __pycache__/
 *.pyc
 .env
 venv/
 .venv/
+output/
+*.pid
+*.log
+.email-watcher.pid

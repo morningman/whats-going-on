@@ -4,6 +4,7 @@ import email
 import email.header
 import gzip
 import json
+import logging
 import mailbox
 import os
 import tempfile
@@ -12,6 +13,8 @@ from datetime import datetime
 import requests
 
 from . import BaseFetcher
+
+logger = logging.getLogger("fetchers.pipermail")
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "emails")
 
@@ -34,7 +37,9 @@ class PipermailFetcher(BaseFetcher):
         # Check cache first
         cache = self._load_cache(config, year_month)
         if cache is not None:
-            return self._filter_by_date(cache, date)
+            result = self._filter_by_date(cache, date)
+            logger.info("[Pipermail] Cache hit for %s — %d emails on %s", year_month, len(result), date)
+            return result
 
         base_url = config.get("base_url", "").rstrip("/")
         auth = config.get("auth")
@@ -48,22 +53,31 @@ class PipermailFetcher(BaseFetcher):
                 kwargs = {"timeout": 30}
                 if auth:
                     kwargs["auth"] = (auth.get("username", ""), auth.get("password", ""))
+                logger.info("[Pipermail] Trying %s", url)
                 resp = requests.get(url, **kwargs)
                 if resp.status_code == 200:
                     if suffix.endswith(".gz"):
                         mbox_text = gzip.decompress(resp.content).decode("utf-8", errors="replace")
                     else:
                         mbox_text = resp.text
+                    logger.info("[Pipermail] Downloaded %s — %d bytes", url, len(mbox_text))
                     break
-            except Exception:
+                else:
+                    logger.debug("[Pipermail] %s returned status %d", url, resp.status_code)
+            except Exception as e:
+                logger.debug("[Pipermail] Failed to fetch %s: %s", url, e)
                 continue
 
         if mbox_text is None:
+            logger.warning("[Pipermail] No mbox archive found for %s", year_month)
             return []
 
         emails = self._parse_mbox(mbox_text)
+        logger.info("[Pipermail] Parsed %d emails from mbox", len(emails))
         self._save_cache(config, year_month, emails)
-        return self._filter_by_date(emails, date)
+        result = self._filter_by_date(emails, date)
+        logger.info("[Pipermail] %d emails match date %s", len(result), date)
+        return result
 
     def test_connection(self, config: dict) -> dict:
         """Test connection by trying to access the archive index."""
@@ -73,10 +87,13 @@ class PipermailFetcher(BaseFetcher):
             kwargs = {"timeout": 10}
             if auth:
                 kwargs["auth"] = (auth.get("username", ""), auth.get("password", ""))
+            logger.info("[Pipermail] Testing connection to %s", base_url)
             resp = requests.get(base_url + "/", **kwargs)
             resp.raise_for_status()
+            logger.info("[Pipermail] Connection test OK")
             return {"ok": True, "message": "Connected to Pipermail archive."}
         except Exception as e:
+            logger.warning("[Pipermail] Connection test failed: %s", e)
             return {"ok": False, "message": str(e)}
 
     def _parse_mbox(self, mbox_text: str) -> list[dict]:

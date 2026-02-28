@@ -198,6 +198,44 @@ header nav a.active { color: #2b6cb0; font-weight: 600; }
 .list-item .info .name { font-weight: 600; }
 .list-item .info .detail { font-size: 0.85rem; color: #718096; }
 
+/* Provider items */
+.provider-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  background: #f7fafc;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.provider-item.active {
+  border-color: #3182ce;
+  background: #ebf8ff;
+}
+
+.provider-item .provider-radio {
+  flex-shrink: 0;
+}
+
+.provider-item .provider-radio input[type="radio"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #3182ce;
+  cursor: pointer;
+}
+
+.provider-item .info { flex: 1; }
+.provider-item .info .name { font-weight: 600; }
+.provider-item .info .detail { font-size: 0.85rem; color: #718096; }
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 0.85rem;
+}
+
 /* Status messages */
 .status {
   padding: 10px 14px;

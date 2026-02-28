@@ -12,9 +12,17 @@
     }
   ],
   "llm": {
-    "provider": "claude",
-    "api_key": "",
-    "model": "claude-sonnet-4-20250514"
+    "active_provider": "anthropic",
+    "providers": [
+      {
+        "id": "anthropic",
+        "name": "Anthropic Claude",
+        "type": "anthropic",
+        "base_url": "",
+        "auth_token": "",
+        "model": "claude-sonnet-4-20250514"
+      }
+    ]
   },
   "fetch_days": 7
 }

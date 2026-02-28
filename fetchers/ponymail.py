@@ -1,6 +1,7 @@
 """Apache Pony Mail fetcher - fetches emails from lists.apache.org API."""
 
 import json
+import logging
 import os
 import email
 import mailbox
@@ -10,6 +11,8 @@ from datetime import datetime, timezone
 import requests
 
 from . import BaseFetcher
+
+logger = logging.getLogger("fetchers.ponymail")
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "emails")
 
@@ -27,21 +30,28 @@ class PonyMailFetcher(BaseFetcher):
         # Check cache first
         cache = self._load_cache(config, year_month)
         if cache is not None:
-            return self._filter_by_date(cache, date)
+            result = self._filter_by_date(cache, date)
+            logger.info("[PonyMail] Cache hit for %s@%s %s — %d emails on %s", list_name, domain, year_month, len(result), date)
+            return result
 
         # Fetch from mbox API
         url = f"{base_url}/api/mbox.lua"
         params = {"list": list_name, "domain": domain, "d": year_month}
 
+        logger.info("[PonyMail] Fetching mbox from %s params=%s", url, params)
         resp = requests.get(url, params=params, timeout=30)
         resp.raise_for_status()
+        logger.info("[PonyMail] Response: status=%d, content_length=%d", resp.status_code, len(resp.text))
 
         emails = self._parse_mbox(resp.text)
+        logger.info("[PonyMail] Parsed %d emails from mbox", len(emails))
 
         # Cache the month's data
         self._save_cache(config, year_month, emails)
 
-        return self._filter_by_date(emails, date)
+        result = self._filter_by_date(emails, date)
+        logger.info("[PonyMail] %d emails match date %s", len(result), date)
+        return result
 
     def test_connection(self, config: dict) -> dict:
         """Test connection by hitting the stats API."""
@@ -50,14 +60,17 @@ class PonyMailFetcher(BaseFetcher):
         domain = config.get("domain", "")
         try:
             url = f"{base_url}/api/stats.lua"
+            logger.info("[PonyMail] Testing connection to %s", url)
             resp = requests.get(
                 url, params={"list": list_name, "domain": domain}, timeout=10
             )
             resp.raise_for_status()
             data = resp.json()
             total = sum(data.get("emails", {}).values()) if "emails" in data else 0
+            logger.info("[PonyMail] Connection test OK — %d emails in archive", total)
             return {"ok": True, "message": f"Connected. Found {total} emails in archive."}
         except Exception as e:
+            logger.warning("[PonyMail] Connection test failed: %s", e)
             return {"ok": False, "message": str(e)}
 
     def _parse_mbox(self, mbox_text: str) -> list[dict]:

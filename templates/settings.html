@@ -20,16 +20,41 @@
   <div class="container">
     <div id="status-bar" class="status hidden"></div>
 
-    <!-- LLM Config -->
+    <!-- LLM Providers -->
     <div class="card">
-      <h2>LLM Configuration</h2>
+      <h2>LLM Providers</h2>
+      <p style="color:#718096; font-size:0.9rem; margin-bottom:12px;">
+        Configure one or more LLM providers. Select the active provider with the radio button.
+      </p>
+      <div id="providers-container"></div>
+
+      <h3 style="margin-top:16px; font-size:1rem;">Add New Provider</h3>
       <div class="form-group">
-        <label for="llm-api-key">Claude API Key</label>
-        <input type="password" id="llm-api-key" placeholder="sk-ant-...">
+        <label for="new-provider-name">Display Name</label>
+        <input type="text" id="new-provider-name" placeholder="My Claude API">
       </div>
       <div class="form-group">
-        <label for="llm-model">Model</label>
-        <input type="text" id="llm-model" value="claude-sonnet-4-20250514">
+        <label for="new-provider-type">Type</label>
+        <select id="new-provider-type">
+          <option value="anthropic">Anthropic (Claude)</option>
+          <option value="openai">OpenAI / Compatible</option>
+          <option value="google">Google (Gemini)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="new-provider-base-url">Base URL <span style="color:#a0aec0; font-weight:normal;">(optional, leave empty for default)</span></label>
+        <input type="text" id="new-provider-base-url" placeholder="https://api.anthropic.com">
+      </div>
+      <div class="form-group">
+        <label for="new-provider-auth-token">Auth Token</label>
+        <input type="password" id="new-provider-auth-token" placeholder="sk-...">
+      </div>
+      <div class="form-group">
+        <label for="new-provider-model">Model</label>
+        <input type="text" id="new-provider-model" value="claude-sonnet-4-20250514">
+      </div>
+      <div style="display:flex; gap:8px; margin-top:12px;">
+        <button class="btn btn-primary" id="btn-add-provider">Add Provider</button>
       </div>
     </div>
 
