@@ -1,13 +1,28 @@
 {
+  "asf_auth": {
+    "cookie": ""
+  },
   "mailing_lists": [
     {
       "id": "doris-dev",
       "name": "Apache Doris Dev",
       "type": "ponymail",
+      "private": false,
       "config": {
         "base_url": "https://lists.apache.org",
         "list": "dev",
         "domain": "doris.apache.org"
+      }
+    },
+    {
+      "id": "apachecon-planners",
+      "name": "ApacheCon Planners",
+      "type": "ponymail",
+      "private": true,
+      "config": {
+        "base_url": "https://lists.apache.org",
+        "list": "planners",
+        "domain": "apachecon.com"
       }
     }
   ],

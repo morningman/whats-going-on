@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Settings - Email Watcher</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
+
 <body>
   <header>
     <div class="container">
@@ -19,6 +21,56 @@
 
   <div class="container">
     <div id="status-bar" class="status hidden"></div>
+
+    <!-- ASF Authentication -->
+    <div class="card">
+      <h2>🔐 ASF Authentication</h2>
+      <p style="color:#718096; font-size:0.9rem; margin-bottom:12px;">
+        Private Apache mailing lists require ASF login. Enter your ASF LDAP credentials below.
+      </p>
+
+      <div id="asf-auth-status" style="margin-bottom:16px;"></div>
+
+      <!-- Login with credentials (primary) -->
+      <div id="asf-login-section"
+        style="background:#f7fafc; border:1px solid #e2e8f0; border-radius:8px; padding:16px; margin-bottom:12px;">
+        <p style="font-weight:600; margin-bottom:10px; color:#2d3748;">Login with ASF Account</p>
+        <div class="form-group" style="margin-bottom:10px;">
+          <label for="asf-username">Username</label>
+          <input type="text" id="asf-username" placeholder="ASF LDAP username" autocomplete="username">
+        </div>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label for="asf-password">Password</label>
+          <input type="password" id="asf-password" placeholder="ASF LDAP password" autocomplete="current-password">
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <button class="btn btn-primary" id="btn-asf-login">Login</button>
+          <button class="btn btn-danger" id="btn-asf-logout" style="margin-left:auto;">Logout</button>
+        </div>
+      </div>
+
+      <!-- Manual cookie (advanced, collapsible) -->
+      <details style="margin-top:4px;">
+        <summary style="cursor:pointer; color:#718096; font-size:0.85rem; user-select:none;">
+          Advanced: Manual cookie paste
+        </summary>
+        <div style="background:#f7fafc; border:1px solid #e2e8f0; border-radius:8px; padding:16px; margin-top:8px;">
+          <p style="font-size:0.85rem; color:#718096; margin-bottom:8px;">
+            If auto-login doesn't work, log in at
+            <a href="https://lists.apache.org/oauth.html" target="_blank" rel="noopener">lists.apache.org</a>,
+            then run <code>document.cookie</code> in the browser console and paste it below.
+          </p>
+          <div class="form-group" style="margin-bottom:10px;">
+            <label for="asf-cookie">Session Cookie</label>
+            <input type="password" id="asf-cookie" placeholder="Paste cookie string here...">
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-primary" id="btn-asf-verify">Verify &amp; Save</button>
+            <button class="btn btn-secondary" id="btn-asf-toggle-cookie">👁 Show</button>
+          </div>
+        </div>
+      </details>
+    </div>
 
     <!-- LLM Providers -->
     <div class="card">
@@ -42,7 +94,8 @@
         </select>
       </div>
       <div class="form-group">
-        <label for="new-provider-base-url">Base URL <span style="color:#a0aec0; font-weight:normal;">(optional, leave empty for default)</span></label>
+        <label for="new-provider-base-url">Base URL <span style="color:#a0aec0; font-weight:normal;">(optional, leave
+            empty for default)</span></label>
         <input type="text" id="new-provider-base-url" placeholder="https://api.anthropic.com">
       </div>
       <div class="form-group">
@@ -112,4 +165,5 @@
 
   <script src="/static/settings.js"></script>
 </body>
+
 </html>

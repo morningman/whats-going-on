@@ -6,9 +6,11 @@ import os
 import email
 import mailbox
 import tempfile
+import time
 from datetime import datetime, timezone
 
 import requests
+from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from . import BaseFetcher
 
@@ -20,7 +22,42 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "ema
 class PonyMailFetcher(BaseFetcher):
     fetcher_type = "ponymail"
 
-    def fetch_emails(self, config: dict, date: str) -> list[dict]:
+    # Max retries for transient connection errors
+    MAX_RETRIES = 3
+    RETRY_BACKOFF = 2  # seconds, doubled each retry
+
+    def _build_request_kwargs(self, cookie: str = "", timeout: int = 30) -> dict:
+        """Build common request kwargs including auth cookies if provided."""
+        kwargs = {"timeout": timeout}
+        if cookie:
+            kwargs["headers"] = {"Cookie": cookie}
+            logger.debug("[PonyMail] Using cookie authentication")
+        return kwargs
+
+    def _request_with_retry(self, method: str, url: str, cookie: str = "", **kwargs) -> requests.Response:
+        """Make an HTTP request with retry logic for transient connection errors."""
+        req_kwargs = self._build_request_kwargs(cookie, timeout=kwargs.pop("timeout", 30))
+        req_kwargs.update(kwargs)
+        last_error = None
+
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                resp = requests.request(method, url, **req_kwargs)
+                return resp
+            except RequestsConnectionError as e:
+                last_error = e
+                logger.warning(
+                    "[PonyMail] Connection error (attempt %d/%d): %s",
+                    attempt, self.MAX_RETRIES, e,
+                )
+                if attempt < self.MAX_RETRIES:
+                    wait = self.RETRY_BACKOFF * (2 ** (attempt - 1))
+                    logger.info("[PonyMail] Retrying in %ds...", wait)
+                    time.sleep(wait)
+
+        raise last_error
+
+    def fetch_emails(self, config: dict, date: str, cookie: str = "") -> list[dict]:
         """Fetch emails for a specific date from Pony Mail mbox API."""
         year_month = date[:7]  # "2026-02" from "2026-02-27"
         list_name = config.get("list", "dev")
@@ -39,7 +76,7 @@ class PonyMailFetcher(BaseFetcher):
         params = {"list": list_name, "domain": domain, "d": year_month}
 
         logger.info("[PonyMail] Fetching mbox from %s params=%s", url, params)
-        resp = requests.get(url, params=params, timeout=30)
+        resp = self._request_with_retry("GET", url, cookie, params=params)
         resp.raise_for_status()
         logger.info("[PonyMail] Response: status=%d, content_length=%d", resp.status_code, len(resp.text))
 
@@ -53,7 +90,7 @@ class PonyMailFetcher(BaseFetcher):
         logger.info("[PonyMail] %d emails match date %s", len(result), date)
         return result
 
-    def test_connection(self, config: dict) -> dict:
+    def test_connection(self, config: dict, cookie: str = "") -> dict:
         """Test connection by hitting the stats API."""
         base_url = config.get("base_url", "https://lists.apache.org")
         list_name = config.get("list", "dev")
@@ -61,8 +98,8 @@ class PonyMailFetcher(BaseFetcher):
         try:
             url = f"{base_url}/api/stats.lua"
             logger.info("[PonyMail] Testing connection to %s", url)
-            resp = requests.get(
-                url, params={"list": list_name, "domain": domain}, timeout=10
+            resp = self._request_with_retry(
+                "GET", url, cookie, params={"list": list_name, "domain": domain}, timeout=10
             )
             resp.raise_for_status()
             data = resp.json()

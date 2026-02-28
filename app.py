@@ -10,6 +10,7 @@ import sys
 from flask import Flask, jsonify, render_template, request
 
 from fetchers import get_fetcher
+import asf_auth
 import summarizer
 
 app = Flask(__name__)
@@ -111,7 +112,7 @@ def _migrate_config(config: dict) -> dict:
 
 
 def _mask_tokens(config: dict) -> dict:
-    """Mask auth tokens in config for safe API response."""
+    """Mask auth tokens and cookies in config for safe API response."""
     safe = copy.deepcopy(config)
     for p in safe.get("llm", {}).get("providers", []):
         token = p.get("auth_token", "")
@@ -119,11 +120,17 @@ def _mask_tokens(config: dict) -> dict:
             p["auth_token"] = token[:8] + "..." + token[-4:]
         elif token:
             p["auth_token"] = "***"
+    # Mask centralized ASF auth cookie
+    cookie = safe.get("asf_auth", {}).get("cookie", "")
+    if cookie and len(cookie) > 12:
+        safe["asf_auth"]["cookie"] = cookie[:8] + "..." + cookie[-4:]
+    elif cookie:
+        safe["asf_auth"]["cookie"] = "***"
     return safe
 
 
 def _restore_masked_tokens(new_config: dict) -> dict:
-    """Restore masked auth tokens from existing saved config."""
+    """Restore masked auth tokens and cookies from existing saved config."""
     if not os.path.exists(CONFIG_PATH):
         return new_config
     try:
@@ -142,6 +149,11 @@ def _restore_masked_tokens(new_config: dict) -> dict:
             old_p = old_providers.get(p["id"])
             if old_p:
                 p["auth_token"] = old_p.get("auth_token", "")
+
+    # Restore masked centralized ASF auth cookie
+    cookie = new_config.get("asf_auth", {}).get("cookie", "")
+    if cookie and ("..." in cookie or cookie == "***"):
+        new_config["asf_auth"]["cookie"] = old_config.get("asf_auth", {}).get("cookie", "")
     return new_config
 
 
@@ -189,7 +201,10 @@ def api_config():
 @app.route("/api/lists")
 def api_lists():
     config = load_config()
-    lists = [{"id": ml["id"], "name": ml["name"], "type": ml["type"]} for ml in config.get("mailing_lists", [])]
+    lists = [
+        {"id": ml["id"], "name": ml["name"], "type": ml["type"], "private": ml.get("private", False)}
+        for ml in config.get("mailing_lists", [])
+    ]
     logger.debug("GET /api/lists — returning %d lists", len(lists))
     return jsonify(lists)
 
@@ -211,9 +226,16 @@ def api_emails():
         logger.warning("GET /api/emails — list '%s' not found", list_id)
         return jsonify({"error": f"List '{list_id}' not found"}), 404
 
+    # Check private list authentication
+    cookie = _get_cookie_for_list(config, ml)
+    if ml.get("private", False) and not cookie:
+        msg = f"List '{ml['name']}' is private and requires ASF authentication. Please log in on the Settings page."
+        logger.warning("GET /api/emails — %s", msg)
+        return jsonify({"error": msg}), 403
+
     try:
         fetcher = get_fetcher(ml["type"])
-        emails = fetcher.fetch_emails(ml["config"], date)
+        emails = fetcher.fetch_emails(ml["config"], date, cookie=cookie)
         logger.info("GET /api/emails — fetched %d emails for %s on %s", len(emails), list_id, date)
         return jsonify({"emails": emails, "count": len(emails)})
     except Exception as e:
@@ -247,9 +269,16 @@ def api_digest():
 
     # POST - generate new digest
     logger.info("POST /api/digest — generating digest for %s on %s", list_id, date)
+    # Check private list authentication
+    cookie = _get_cookie_for_list(config, ml)
+    if ml.get("private", False) and not cookie:
+        msg = f"List '{ml['name']}' is private and requires ASF authentication. Please log in on the Settings page."
+        logger.warning("POST /api/digest — %s", msg)
+        return jsonify({"error": msg}), 403
+
     try:
         fetcher = get_fetcher(ml["type"])
-        emails = fetcher.fetch_emails(ml["config"], date)
+        emails = fetcher.fetch_emails(ml["config"], date, cookie=cookie)
         llm_config = config.get("llm", {})
         digest = summarizer.generate_digest(
             emails, list_id, ml["name"], date, llm_config
@@ -259,6 +288,64 @@ def api_digest():
     except Exception as e:
         logger.exception("POST /api/digest — error generating digest for %s on %s", list_id, date)
         return jsonify({"error": str(e)}), 500
+
+
+# --- ASF Authentication API ---
+
+
+@app.route("/api/asf-auth", methods=["GET", "POST"])
+def api_asf_auth():
+    """Manage ASF authentication for private mailing lists."""
+    config = load_config()
+
+    if request.method == "GET":
+        # Return current auth status
+        cookie = config.get("asf_auth", {}).get("cookie", "")
+        result = asf_auth.validate_cookie(cookie) if cookie else {"ok": False, "uid": "", "fullname": "", "message": "Not authenticated"}
+        # Also list which lists are private
+        private_lists = [
+            {"id": ml["id"], "name": ml["name"], "private": ml.get("private", False)}
+            for ml in config.get("mailing_lists", [])
+        ]
+        return jsonify({"auth": result, "lists": private_lists})
+
+    # POST — either login with credentials or save a manual cookie
+    data = request.get_json()
+    if not data:
+        return jsonify({"ok": False, "message": "Request body is required"}), 400
+
+    # Option 1: Login with username/password
+    if "username" in data and "password" in data:
+        username = data["username"].strip()
+        password = data["password"]
+        if not username or not password:
+            return jsonify({"ok": False, "message": "Username and password are required."})
+        logger.info("POST /api/asf-auth — attempting login for user '%s'", username)
+        result = asf_auth.login(username, password)
+        if result["ok"] and result.get("cookie"):
+            config.setdefault("asf_auth", {})["cookie"] = result["cookie"]
+            save_config(config)
+            logger.info("POST /api/asf-auth — login successful, cookie saved")
+        return jsonify(result)
+
+    # Option 2: Manual cookie paste
+    if "cookie" in data:
+        cookie = data["cookie"].strip()
+        if not cookie:
+            # Clear authentication
+            config.setdefault("asf_auth", {})["cookie"] = ""
+            save_config(config)
+            logger.info("POST /api/asf-auth — cleared ASF cookie")
+            return jsonify({"ok": True, "message": "Authentication cleared."})
+
+        result = asf_auth.validate_cookie(cookie)
+        if result["ok"]:
+            config.setdefault("asf_auth", {})["cookie"] = cookie
+            save_config(config)
+            logger.info("POST /api/asf-auth — manual cookie saved, user=%s", result.get("uid", ""))
+        return jsonify(result)
+
+    return jsonify({"ok": False, "message": "Provide 'username'+'password' or 'cookie'."}), 400
 
 
 # --- Test Connection API ---
@@ -271,8 +358,10 @@ def api_test_connection():
         return jsonify({"error": "type and config are required"}), 400
     logger.info("POST /api/test-connection — type=%s", data["type"])
     try:
+        config = load_config()
+        cookie = config.get("asf_auth", {}).get("cookie", "")
         fetcher = get_fetcher(data["type"])
-        result = fetcher.test_connection(data["config"])
+        result = fetcher.test_connection(data["config"], cookie=cookie)
         logger.info("POST /api/test-connection — result: ok=%s, message=%s", result.get("ok"), result.get("message"))
         return jsonify(result)
     except Exception as e:
@@ -287,6 +376,13 @@ def _find_list(config: dict, list_id: str) -> dict | None:
         if ml["id"] == list_id:
             return ml
     return None
+
+
+def _get_cookie_for_list(config: dict, ml: dict) -> str:
+    """Get the auth cookie for a mailing list if needed."""
+    if ml.get("type") == "ponymail":
+        return config.get("asf_auth", {}).get("cookie", "")
+    return ""
 
 
 if __name__ == "__main__":

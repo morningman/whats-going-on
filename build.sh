@@ -49,6 +49,7 @@ echo "📦 复制项目文件..."
 
 # 复制 Python 源码
 cp "$SCRIPT_DIR/app.py" "$OUTPUT_DIR/"
+cp "$SCRIPT_DIR/asf_auth.py" "$OUTPUT_DIR/"
 cp "$SCRIPT_DIR/summarizer.py" "$OUTPUT_DIR/"
 cp "$SCRIPT_DIR/requirements.txt" "$OUTPUT_DIR/"
 

@@ -7,14 +7,148 @@ const listsContainer = document.getElementById('lists-container');
 const listType = document.getElementById('new-list-type');
 const ponymailFields = document.getElementById('ponymail-fields');
 const pipermailFields = document.getElementById('pipermail-fields');
+const asfAuthStatus = document.getElementById('asf-auth-status');
+const asfCookieInput = document.getElementById('asf-cookie');
 
 let currentConfig = null;
+
+// --- ASF Authentication ---
+
+async function loadAsfAuthStatus() {
+  try {
+    const resp = await fetch('/api/asf-auth');
+    const data = await resp.json();
+    const auth = data.auth || {};
+    const lists = data.lists || [];
+
+    let html = '';
+
+    // Auth status
+    if (auth.ok) {
+      const display = auth.fullname ? `${auth.fullname} (${auth.uid})` : auth.uid;
+      html += `<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <span style="font-size:1.1em;">✅</span>
+        <span style="color:#276749; font-weight:600;">Authenticated as ${escapeHtml(display)}</span>
+      </div>`;
+    } else {
+      html += `<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <span style="font-size:1.1em;">🔒</span>
+        <span style="color:#c53030; font-weight:600;">Not authenticated</span>
+      </div>`;
+    }
+
+    // Private lists info
+    const privateLists = lists.filter(l => l.private);
+    if (privateLists.length > 0) {
+      const names = privateLists.map(l => `<strong>${escapeHtml(l.name)}</strong>`).join(', ');
+      const statusIcon = auth.ok ? '✅' : '⚠️';
+      html += `<p style="font-size:0.85rem; color:#718096;">
+        ${statusIcon} Private lists requiring auth: ${names}
+      </p>`;
+    }
+
+    asfAuthStatus.innerHTML = html;
+  } catch (e) {
+    asfAuthStatus.innerHTML = '<p style="color:#c53030; font-size:0.9rem;">Failed to load auth status.</p>';
+  }
+}
+
+// Login with username/password
+document.getElementById('btn-asf-login').addEventListener('click', async () => {
+  const username = document.getElementById('asf-username').value.trim();
+  const password = document.getElementById('asf-password').value;
+  if (!username || !password) {
+    showStatus('Please enter both username and password.', 'error');
+    return;
+  }
+  const btn = document.getElementById('btn-asf-login');
+  btn.disabled = true;
+  btn.textContent = 'Logging in...';
+  try {
+    const resp = await fetch('/api/asf-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const result = await resp.json();
+    showStatus(result.message, result.ok ? 'success' : 'error');
+    if (result.ok) {
+      document.getElementById('asf-username').value = '';
+      document.getElementById('asf-password').value = '';
+      loadAsfAuthStatus();
+    }
+  } catch (e) {
+    showStatus('Login failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Login';
+  }
+});
+
+// Verify & Save cookie (fallback)
+document.getElementById('btn-asf-verify').addEventListener('click', async () => {
+  const cookie = asfCookieInput.value.trim();
+  if (!cookie) {
+    showStatus('Please paste the session cookie first.', 'error');
+    return;
+  }
+  const btn = document.getElementById('btn-asf-verify');
+  btn.disabled = true;
+  btn.textContent = 'Verifying...';
+  try {
+    const resp = await fetch('/api/asf-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cookie }),
+    });
+    const result = await resp.json();
+    showStatus(result.message, result.ok ? 'success' : 'error');
+    if (result.ok) {
+      asfCookieInput.value = '';
+      loadAsfAuthStatus();
+    }
+  } catch (e) {
+    showStatus('Failed to verify cookie: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Verify & Save';
+  }
+});
+
+// Toggle cookie visibility
+document.getElementById('btn-asf-toggle-cookie').addEventListener('click', () => {
+  const btn = document.getElementById('btn-asf-toggle-cookie');
+  if (asfCookieInput.type === 'password') {
+    asfCookieInput.type = 'text';
+    btn.textContent = '🙈 Hide';
+  } else {
+    asfCookieInput.type = 'password';
+    btn.textContent = '👁 Show';
+  }
+});
+
+// Logout
+document.getElementById('btn-asf-logout').addEventListener('click', async () => {
+  if (!confirm('Clear ASF authentication?')) return;
+  try {
+    const resp = await fetch('/api/asf-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cookie: '' }),
+    });
+    const result = await resp.json();
+    showStatus(result.message, result.ok ? 'success' : 'error');
+    loadAsfAuthStatus();
+  } catch (e) {
+    showStatus('Failed to clear auth: ' + e.message, 'error');
+  }
+});
 
 // Provider type defaults
 const PROVIDER_DEFAULTS = {
   anthropic: { model: 'claude-sonnet-4-20250514', placeholder: 'https://api.anthropic.com' },
-  openai:    { model: 'gpt-4o',                    placeholder: 'https://api.openai.com/v1' },
-  google:    { model: 'gemini-2.0-flash',           placeholder: 'https://generativelanguage.googleapis.com' },
+  openai: { model: 'gpt-4o', placeholder: 'https://api.openai.com/v1' },
+  google: { model: 'gemini-2.0-flash', placeholder: 'https://generativelanguage.googleapis.com' },
 };
 
 function showStatus(msg, type) {
@@ -48,7 +182,7 @@ function renderProviders() {
     const div = document.createElement('div');
     div.className = 'provider-item' + (isActive ? ' active' : '');
 
-    const typeLabel = {anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google'}[p.type] || p.type;
+    const typeLabel = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google' }[p.type] || p.type;
     const baseUrlDisplay = p.base_url || '(default)';
 
     div.innerHTML = `
@@ -163,9 +297,12 @@ function renderLists() {
   lists.forEach((ml, idx) => {
     const div = document.createElement('div');
     div.className = 'list-item';
+    const privateBadge = ml.private
+      ? '<span style="background:#fed7d7; color:#c53030; font-size:0.75rem; padding:2px 6px; border-radius:3px; margin-left:6px;">🔒 PRIVATE</span>'
+      : '';
     div.innerHTML = `
       <div class="info">
-        <div class="name">${escapeHtml(ml.name)}</div>
+        <div class="name">${escapeHtml(ml.name)}${privateBadge}</div>
         <div class="detail">${ml.type} &middot; ${ml.id}</div>
       </div>
       <button class="btn btn-danger" data-idx="${idx}">Remove</button>
@@ -292,3 +429,4 @@ function escapeHtml(str) {
 
 // Init
 loadConfig();
+loadAsfAuthStatus();

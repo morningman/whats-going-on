@@ -9,12 +9,12 @@ class BaseFetcher(ABC):
     fetcher_type: str = ""
 
     @abstractmethod
-    def fetch_emails(self, config: dict, date: str) -> list[dict]:
+    def fetch_emails(self, config: dict, date: str, cookie: str = "") -> list[dict]:
         """Fetch emails for a given date. Returns unified format."""
         raise NotImplementedError
 
     @abstractmethod
-    def test_connection(self, config: dict) -> dict:
+    def test_connection(self, config: dict, cookie: str = "") -> dict:
         """Test if the connection works. Returns {"ok": bool, "message": str}."""
         raise NotImplementedError
 
