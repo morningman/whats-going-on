@@ -14,6 +14,7 @@ from datetime import datetime
 logger = logging.getLogger("summarizer")
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "digests")
+SUMMARY_DIR = os.path.join(os.path.dirname(__file__), "data", "summaries")
 
 
 def _digest_path(list_id: str, date: str) -> str:
@@ -329,6 +330,20 @@ def generate_digest(
     }
 
     save_digest(list_id, date, digest)
+
+    # Export summary to Markdown file
+    try:
+        export_summary_markdown(
+            source_type="email",
+            source_id=list_id,
+            content_date=date,
+            lang=lang,
+            summary_text=summary_text,
+            metadata={"list_name": list_name, "email_count": len(emails)},
+        )
+    except Exception:
+        logger.exception("Failed to export email summary to Markdown")
+
     logger.info("Digest generation complete for list=%s, date=%s", list_id, date)
     return digest
 
@@ -601,10 +616,10 @@ def _build_github_prompt(activity: dict, repo_name: str, days: int, lang: str = 
 
 Provide a structured Markdown summary containing:
 
-1. **Overview**: 2-3 sentences summarizing the repository's recent activity
-2. **Key PRs**: List the most important Pull Requests (merged first), briefly explaining their content and significance. Each PR must include a clickable link in the format [#number](URL)
-3. **Active Issues**: List noteworthy Issues, especially those with many comments or important labels. Each Issue must include a clickable link in the format [#number](URL)
-4. **Trend Analysis**: Brief analysis of project activity, focus areas, etc.
+1. **Trend Analysis**: Brief analysis of project activity, focus areas, etc.
+2. **Overview**: 2-3 sentences summarizing the repository's recent activity
+3. **Key PRs**: List the most important Pull Requests (merged first), briefly explaining their content and significance. Each PR must include a clickable link in the format [#number](URL)
+4. **Active Issues**: List noteworthy Issues, especially those with many comments or important labels. Each Issue must include a clickable link in the format [#number](URL)
 
 Note: When mentioning PRs or Issues, always use Markdown link format [#number](URL) to make them clickable to the GitHub page.
 
@@ -621,10 +636,10 @@ Statistics:
 
 请提供一个结构化的 Markdown 格式摘要，包含：
 
-1. **总览**: 用 2-3 句话概括这个仓库最近的活动情况
-2. **重要 PR**: 列出最重要的 Pull Request（已合并的优先），简要说明其内容和意义。每个 PR 必须包含可点击的链接，格式为 [#编号](链接地址)
-3. **活跃 Issue**: 列出值得关注的 Issue，特别是评论较多或有重要标签的。每个 Issue 必须包含可点击的链接，格式为 [#编号](链接地址)
-4. **趋势观察**: 对项目活跃度、关注领域等做简要分析
+1. **趋势观察**: 对项目活跃度、关注领域等做简要分析
+2. **总览**: 用 2-3 句话概括这个仓库最近的活动情况
+3. **重要 PR**: 列出最重要的 Pull Request（已合并的优先），简要说明其内容和意义。每个 PR 必须包含可点击的链接，格式为 [#编号](链接地址)
+4. **活跃 Issue**: 列出值得关注的 Issue，特别是评论较多或有重要标签的。每个 Issue 必须包含可点击的链接，格式为 [#编号](链接地址)
 
 注意：在提到 PR 或 Issue 时，务必使用 Markdown 链接格式 [#编号](URL) 使其可点击跳转到 GitHub 页面。
 
@@ -717,7 +732,105 @@ def generate_github_digest(
     }
 
     save_digest(cache_key, "", digest)
+
+    # Export summary to Markdown file
+    try:
+        # content_date: use today as reference date for the digest range
+        content_date = datetime.now().strftime("%Y-%m-%d")
+        export_summary_markdown(
+            source_type="github",
+            source_id=repo_id,
+            content_date=content_date,
+            lang=lang,
+            summary_text=summary_text,
+            metadata={"repo_name": repo_name, "days": days,
+                      "total_prs": len(prs), "total_issues": len(issues)},
+        )
+    except Exception:
+        logger.exception("Failed to export GitHub summary to Markdown")
+
     logger.info("GitHub digest complete for %s", cache_key)
     return digest
 
 
+# ---------------------------------------------------------------------------
+# Summary Markdown export & listing
+# ---------------------------------------------------------------------------
+
+def export_summary_markdown(
+    source_type: str,
+    source_id: str,
+    content_date: str,
+    lang: str,
+    summary_text: str,
+    metadata: dict | None = None,
+):
+    """Export an AI summary to a Markdown file in data/summaries/.
+
+    The file includes a YAML-like header and the summary body.
+    Filename pattern: {source_type}__{source_id}__{gen_date}__{content_date}__{lang}.md
+    """
+    os.makedirs(SUMMARY_DIR, exist_ok=True)
+    gen_date = datetime.now().strftime("%Y-%m-%d")
+    gen_time = datetime.now().isoformat()
+    filename = f"{source_type}__{source_id}__{gen_date}__{content_date}__{lang}.md"
+    filepath = os.path.join(SUMMARY_DIR, filename)
+
+    header_lines = [
+        "---",
+        f"source_type: {source_type}",
+        f"source_id: {source_id}",
+        f"generated_at: {gen_time}",
+        f"content_date: {content_date}",
+        f"language: {lang}",
+    ]
+    if metadata:
+        for k, v in metadata.items():
+            header_lines.append(f"{k}: {v}")
+    header_lines.append("---")
+    header_lines.append("")
+
+    content = "\n".join(header_lines) + summary_text + "\n"
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(content)
+    logger.info("Summary exported to Markdown: %s", filepath)
+
+
+def list_summary_files(source_type: str | None = None) -> list[dict]:
+    """List all saved summary Markdown files.
+
+    Returns a list of dicts with keys: filename, source_type, source_id,
+    gen_date, content_date, lang.
+    """
+    if not os.path.isdir(SUMMARY_DIR):
+        return []
+
+    results = []
+    for fname in sorted(os.listdir(SUMMARY_DIR), reverse=True):
+        if not fname.endswith(".md"):
+            continue
+        parts = fname[:-3].split("__")  # strip .md, split by __
+        if len(parts) < 5:
+            continue
+        s_type, s_id, g_date, c_date, lang = parts[0], parts[1], parts[2], parts[3], parts[4]
+        if source_type and s_type != source_type:
+            continue
+        results.append({
+            "filename": fname,
+            "source_type": s_type,
+            "source_id": s_id,
+            "gen_date": g_date,
+            "content_date": c_date,
+            "lang": lang,
+        })
+    return results
+
+
+def read_summary_file(filename: str) -> str | None:
+    """Read the contents of a summary Markdown file."""
+    filepath = os.path.join(SUMMARY_DIR, filename)
+    if not os.path.exists(filepath):
+        return None
+    with open(filepath, "r", encoding="utf-8") as f:
+        return f.read()

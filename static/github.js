@@ -289,6 +289,86 @@ function renderDigest(data) {
     }
 }
 
+// --- History Summaries ---
+
+const historyToggle = document.getElementById('history-toggle');
+const historyList = document.getElementById('history-list');
+const historyContent = document.getElementById('history-content');
+const historyDetail = document.getElementById('history-detail');
+const historyBack = document.getElementById('history-back');
+
+let historyExpanded = false;
+
+historyToggle.addEventListener('click', function () {
+    historyExpanded = !historyExpanded;
+    historyToggle.querySelector('.toggle-icon').textContent = historyExpanded ? '▼' : '▶';
+    if (historyExpanded) {
+        historyList.classList.remove('hidden');
+        historyContent.classList.add('hidden');
+        loadHistorySummaries();
+    } else {
+        historyList.classList.add('hidden');
+        historyContent.classList.add('hidden');
+    }
+});
+
+historyBack.addEventListener('click', function () {
+    historyContent.classList.add('hidden');
+    historyList.classList.remove('hidden');
+});
+
+async function loadHistorySummaries() {
+    try {
+        const resp = await fetch('/api/summaries?type=github');
+        const files = await resp.json();
+        if (files.length === 0) {
+            historyList.innerHTML = '<p style="color:#718096;padding:12px;">暂无历史摘要记录</p>';
+            return;
+        }
+        historyList.innerHTML = files.map(f => {
+            const sourceLabel = f.source_id;
+            return `
+                <div class="history-item" data-filename="${escapeHtml(f.filename)}">
+                    <div class="history-item-title">🐙 ${escapeHtml(sourceLabel)}</div>
+                    <div class="history-item-meta">
+                        <span>📅 内容日期: ${f.content_date}</span>
+                        <span>🕐 生成日期: ${f.gen_date}</span>
+                        <span>🌐 ${f.lang === 'zh' ? '中文' : 'English'}</span>
+                    </div>
+                </div>`;
+        }).join('');
+
+        historyList.querySelectorAll('.history-item').forEach(item => {
+            item.addEventListener('click', () => viewHistorySummary(item.dataset.filename));
+        });
+    } catch (e) {
+        historyList.innerHTML = '<p style="color:#e53e3e;">加载历史摘要失败: ' + escapeHtml(e.message) + '</p>';
+    }
+}
+
+async function viewHistorySummary(filename) {
+    historyList.classList.add('hidden');
+    historyContent.classList.remove('hidden');
+    historyDetail.innerHTML = '<p style="color:#718096;">加载中...</p>';
+    try {
+        const resp = await fetch(`/api/summaries/${encodeURIComponent(filename)}`);
+        const data = await resp.json();
+        if (data.error) {
+            historyDetail.innerHTML = '<p style="color:#e53e3e;">' + escapeHtml(data.error) + '</p>';
+            return;
+        }
+        // Strip YAML frontmatter (between --- delimiters)
+        let content = data.content || '';
+        const fmMatch = content.match(/^---\n[\s\S]*?\n---\n/);
+        if (fmMatch) {
+            content = content.slice(fmMatch[0].length);
+        }
+        historyDetail.innerHTML = renderMarkdown(content);
+    } catch (e) {
+        historyDetail.innerHTML = '<p style="color:#e53e3e;">加载失败: ' + escapeHtml(e.message) + '</p>';
+    }
+}
+
 // Event listeners
 btnGhRun.addEventListener('click', runCombinedFlow);
 

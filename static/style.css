@@ -1082,3 +1082,67 @@ kbd {
 .progress-log::-webkit-scrollbar-thumb:hover {
   background: #718096;
 }
+
+/* --- History Summary Section --- */
+.history-toggle {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: color 0.2s;
+}
+
+.history-toggle:hover {
+  color: #2b6cb0;
+}
+
+.toggle-icon {
+  font-size: 0.8rem;
+  color: #a0aec0;
+  transition: transform 0.2s;
+}
+
+.history-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.history-item {
+  padding: 12px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: #f7fafc;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.history-item:hover {
+  border-color: #3182ce;
+  background: #ebf8ff;
+  box-shadow: 0 2px 6px rgba(49, 130, 206, 0.1);
+}
+
+.history-item-title {
+  font-weight: 600;
+  color: #2d3748;
+  font-size: 0.95rem;
+  margin-bottom: 4px;
+}
+
+.history-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 0.82rem;
+  color: #718096;
+}
+
+.history-content {
+  animation: fadeIn 0.2s ease;
+}
+
+#history-back {
+  margin-bottom: 12px;
+}

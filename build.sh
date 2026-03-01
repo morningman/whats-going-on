@@ -55,6 +55,7 @@ echo "📦 复制项目文件..."
 # 复制 Python 源码
 cp "$SCRIPT_DIR/app.py" "$OUTPUT_DIR/"
 cp "$SCRIPT_DIR/asf_auth.py" "$OUTPUT_DIR/"
+cp "$SCRIPT_DIR/cache.py" "$OUTPUT_DIR/"
 cp "$SCRIPT_DIR/summarizer.py" "$OUTPUT_DIR/"
 cp "$SCRIPT_DIR/requirements.txt" "$OUTPUT_DIR/"
 
@@ -100,6 +101,9 @@ fi
 # 创建数据目录
 mkdir -p "$OUTPUT_DIR/data/emails"
 mkdir -p "$OUTPUT_DIR/data/digests"
+mkdir -p "$OUTPUT_DIR/data/cache/emails"
+mkdir -p "$OUTPUT_DIR/data/cache/github"
+mkdir -p "$OUTPUT_DIR/data/summaries"
 mkdir -p "$OUTPUT_DIR/log"
 
 # 恢复之前备份的用户数据（优先使用运行时保存的配置）

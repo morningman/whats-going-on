@@ -35,6 +35,15 @@
     <h2>📧 邮件列表 (<span id="email-count">0</span>)</h2>
     <div id="email-list"></div>
 </div>
+
+<div id="history-section" class="card">
+    <h2 class="history-toggle" id="history-toggle">📜 历史摘要 <span class="toggle-icon">▶</span></h2>
+    <div id="history-list" class="history-list hidden"></div>
+    <div id="history-content" class="history-content hidden">
+        <button class="btn btn-sm btn-secondary" id="history-back">← 返回列表</button>
+        <div id="history-detail" class="digest-content"></div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}

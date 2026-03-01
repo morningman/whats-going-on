@@ -15,6 +15,7 @@ from flask import Flask, Response, jsonify, render_template, request
 
 from fetchers import get_fetcher
 import asf_auth
+import cache
 import summarizer
 
 app = Flask(__name__)
@@ -439,12 +440,22 @@ def api_email_digest_stream():
                     "message": f"正在获取 {ml['name']} 在 {date_str} 的邮件...",
                 })
                 try:
-                    emails = fetcher.fetch_emails(ml["config"], date_str, cookie=cookie)
+                    # Try cache first (skips today's date automatically)
+                    cached_emails = cache.load_email_cache(list_id, date_str)
+                    if cached_emails is not None:
+                        emails = cached_emails
+                        q.put({
+                            "type": "progress",
+                            "message": f"{date_str}: [缓存命中] {len(emails)} 封邮件",
+                        })
+                    else:
+                        emails = fetcher.fetch_emails(ml["config"], date_str, cookie=cookie)
+                        cache.save_email_cache(list_id, date_str, emails)
+                        q.put({
+                            "type": "progress",
+                            "message": f"{date_str}: 获取到 {len(emails)} 封邮件",
+                        })
                     all_emails.extend(emails)
-                    q.put({
-                        "type": "progress",
-                        "message": f"{date_str}: 获取到 {len(emails)} 封邮件",
-                    })
                 except Exception as e:
                     logger.exception("Error fetching emails for %s on %s", ml["name"], date_str)
                     q.put({
@@ -619,7 +630,14 @@ def api_daily_summary():
 
             for date in dates:
                 logger.info("Fetching emails for %s on %s", list_name, date)
-                emails = fetcher.fetch_emails(ml["config"], date, cookie=cookie)
+                # Try cache first (skips today's date automatically)
+                cached_emails = cache.load_email_cache(ml["id"], date)
+                if cached_emails is not None:
+                    emails = cached_emails
+                    logger.info("[缓存命中] %s on %s: %d emails", list_name, date, len(emails))
+                else:
+                    emails = fetcher.fetch_emails(ml["config"], date, cookie=cookie)
+                    cache.save_email_cache(ml["id"], date, emails)
                 list_data[date] = emails
                 # Build email metadata with correct PonyMail permalink links
                 day_meta = []
@@ -965,14 +983,21 @@ def api_github_digest_stream():
 
     def worker():
         try:
-            # First fetch activity (with progress)
-            from sources.github import GitHubSource
-            gh = GitHubSource()
-            token = gh_config.get("token", "")
-            activity = gh.fetch_activity(
-                repo["owner"], repo["repo"], days=days, token=token,
-                progress_cb=progress_cb,
-            )
+            # Try GitHub activity cache first
+            cached_activity = cache.load_github_cache(repo_id, today, days)
+            if cached_activity is not None:
+                activity = cached_activity
+                q.put({"type": "progress", "message": f"[缓存命中] 使用缓存的活动数据"})
+            else:
+                # Fetch activity from GitHub API (with progress)
+                from sources.github import GitHubSource
+                gh = GitHubSource()
+                token = gh_config.get("token", "")
+                activity = gh.fetch_activity(
+                    repo["owner"], repo["repo"], days=days, token=token,
+                    progress_cb=progress_cb,
+                )
+                cache.save_github_cache(repo_id, today, days, activity)
 
             # Emit activity data so frontend can render it immediately
             q.put({"type": "activity_loaded", "data": activity})
@@ -1007,6 +1032,29 @@ def api_github_digest_stream():
 
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# --- Summary History API ---
+
+
+@app.route("/api/summaries")
+def api_summaries():
+    """List saved summary Markdown files. Optional ?type=email|github filter."""
+    source_type = request.args.get("type", None)
+    files = summarizer.list_summary_files(source_type)
+    return jsonify(files)
+
+
+@app.route("/api/summaries/<path:filename>")
+def api_summary_file(filename):
+    """Read a specific summary Markdown file."""
+    # Basic security: prevent path traversal
+    if ".." in filename or "/" in filename:
+        return jsonify({"error": "Invalid filename"}), 400
+    content = summarizer.read_summary_file(filename)
+    if content is None:
+        return jsonify({"error": "File not found"}), 404
+    return jsonify({"filename": filename, "content": content})
 
 
 # --- Slack API (stub — Coming Soon) ---
