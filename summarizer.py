@@ -1,5 +1,6 @@
-"""AI summarizer module - generates daily email digests using LLM APIs.
+"""AI summarizer module - generates digests using LLM APIs.
 
+Supports email digests, GitHub activity summaries, and multi-source summaries.
 Supports multiple LLM providers: Anthropic (Claude), OpenAI (GPT), Google (Gemini).
 Each provider supports custom base_url and auth_token configuration.
 """
@@ -497,4 +498,109 @@ def generate_daily_summary(
     save_daily_summary(trigger_date, result)
     logger.info("Daily summary generation complete for %s", trigger_date)
     return result
+
+
+# --- GitHub Digest ---
+
+
+def _build_github_prompt(activity: dict, repo_name: str, days: int) -> str:
+    """Build the prompt for GitHub activity summary."""
+    prs = activity.get("pulls", [])
+    issues = activity.get("issues", [])
+    stats = activity.get("stats", {})
+
+    sections = ""
+
+    # PR section
+    if prs:
+        sections += f"\n## Pull Requests ({len(prs)} 个)\n"
+        for pr in prs:
+            state = "已合并" if pr.get("merged") else ("开放中" if pr["state"] == "open" else "已关闭")
+            draft = " [Draft]" if pr.get("draft") else ""
+            labels = ", ".join(pr.get("labels", [])) if pr.get("labels") else ""
+            label_text = f" 标签: {labels}" if labels else ""
+            url = pr.get("html_url", "")
+            sections += f"\n- #{pr['number']} {pr['title']}{draft}\n"
+            sections += f"  链接: {url}\n"
+            sections += f"  作者: {pr['user']} | 状态: {state}{label_text}\n"
+            sections += f"  创建: {pr.get('created_at', '')[:10]} | 更新: {pr.get('updated_at', '')[:10]}\n"
+
+    # Issue section
+    if issues:
+        sections += f"\n## Issues ({len(issues)} 个)\n"
+        for issue in issues:
+            state = "开放中" if issue["state"] == "open" else "已关闭"
+            labels = ", ".join(issue.get("labels", [])) if issue.get("labels") else ""
+            label_text = f" 标签: {labels}" if labels else ""
+            url = issue.get("html_url", "")
+            sections += f"\n- #{issue['number']} {issue['title']}\n"
+            sections += f"  链接: {url}\n"
+            sections += f"  作者: {issue['user']} | 状态: {state} | {issue.get('comments', 0)} 条评论{label_text}\n"
+            sections += f"  创建: {issue.get('created_at', '')[:10]} | 更新: {issue.get('updated_at', '')[:10]}\n"
+
+    return f"""你是一个 GitHub 项目活动分析助手。请对以下仓库 "{repo_name}" 最近 {days} 天的 PR 和 Issue 活动进行分析和总结。
+
+**请使用中文输出。**
+
+请提供一个结构化的 Markdown 格式摘要，包含：
+
+1. **总览**: 用 2-3 句话概括这个仓库最近的活动情况
+2. **重要 PR**: 列出最重要的 Pull Request（已合并的优先），简要说明其内容和意义。每个 PR 必须包含可点击的链接，格式为 [#编号](链接地址)
+3. **活跃 Issue**: 列出值得关注的 Issue，特别是评论较多或有重要标签的。每个 Issue 必须包含可点击的链接，格式为 [#编号](链接地址)
+4. **趋势观察**: 对项目活跃度、关注领域等做简要分析
+
+注意：在提到 PR 或 Issue 时，务必使用 Markdown 链接格式 [#编号](URL) 使其可点击跳转到 GitHub 页面。
+
+统计数据:
+- PR 总数: {stats.get('total_prs', 0)} (合并: {stats.get('merged_prs', 0)}, 开放: {stats.get('open_prs', 0)}, 关闭: {stats.get('closed_prs', 0)})
+- Issue 总数: {stats.get('total_issues', 0)} (开放: {stats.get('open_issues', 0)}, 关闭: {stats.get('closed_issues', 0)})
+
+---
+{sections}"""
+
+
+def generate_github_digest(
+    activity: dict,
+    repo_id: str,
+    repo_name: str,
+    days: int,
+    llm_config: dict,
+    cache_key: str,
+) -> dict:
+    """Generate an AI digest for GitHub activity.
+
+    Returns {"summary": str, "generated_at": str, "stats": dict}
+    """
+    # Check cache
+    cached = load_digest(cache_key, "")
+    if cached:
+        logger.info("Returning cached GitHub digest for %s", cache_key)
+        return cached
+
+    prs = activity.get("pulls", [])
+    issues = activity.get("issues", [])
+    if not prs and not issues:
+        logger.info("No GitHub activity for %s (%s)", repo_id, repo_name)
+        return {
+            "summary": "在所选时间范围内没有 PR 或 Issue 活动。",
+            "generated_at": "",
+            "stats": activity.get("stats", {}),
+        }
+
+    logger.info("Generating GitHub digest for %s (%s), days=%d, prs=%d, issues=%d",
+                repo_id, repo_name, days, len(prs), len(issues))
+    provider = _get_active_provider(llm_config)
+    prompt = _build_github_prompt(activity, repo_name, days)
+    summary_text = _call_llm(prompt, provider)
+
+    digest = {
+        "summary": summary_text,
+        "generated_at": datetime.now().isoformat(),
+        "stats": activity.get("stats", {}),
+    }
+
+    save_digest(cache_key, "", digest)
+    logger.info("GitHub digest complete for %s", cache_key)
+    return digest
+
 

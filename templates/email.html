@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Email - What's Going On{% endblock %}
+
+{% block content %}
+<!-- Daily Summary Section -->
+<div class="daily-summary-section">
+    <div class="daily-summary-header">
+        <h2>📋 邮件汇总摘要</h2>
+        <p class="daily-summary-desc">一键汇总所有邮件组的邮件，生成中文摘要报告</p>
+    </div>
+    <div class="daily-summary-controls">
+        <div class="ds-range-selector" id="ds-range-selector">
+            <button class="ds-range-btn" data-days="1">最近 1 天</button>
+            <button class="ds-range-btn active" data-days="3">最近 3 天</button>
+            <button class="ds-range-btn" data-days="7">最近 7 天</button>
+        </div>
+        <button class="btn btn-daily-summary" id="btn-daily-summary">📋 生成摘要</button>
+        <button class="btn btn-secondary btn-sm" id="btn-daily-summary-refresh" style="display:none;">🔄 重新生成</button>
+    </div>
+    <div id="daily-summary-status" class="status hidden"></div>
+    <div id="daily-summary-result" class="card hidden">
+        <div class="daily-summary-meta" id="daily-summary-meta"></div>
+        <div id="daily-summary-content" class="digest-content"></div>
+    </div>
+</div>
+
+<hr class="section-divider">
+
+<h2 class="section-title">📧 单邮件组查阅</h2>
+<div class="controls">
+    <select id="list-select">
+        <option value="">-- Select mailing list --</option>
+    </select>
+    <input type="date" id="date-picker">
+    <button class="btn btn-primary" id="btn-load">Load Emails</button>
+    <button class="btn btn-primary" id="btn-digest" disabled>Generate Digest</button>
+</div>
+
+<div id="status-bar" class="status hidden"></div>
+
+<div id="digest-section" class="card hidden">
+    <h2>Daily Digest</h2>
+    <div id="digest-content" class="digest-content"></div>
+</div>
+
+<div id="emails-section" class="card hidden">
+    <h2>Emails (<span id="email-count">0</span>)</h2>
+    <div id="email-list"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js"></script>
+{% endblock %}

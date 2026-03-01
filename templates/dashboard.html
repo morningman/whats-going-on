@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - What's Going On{% endblock %}
+
+{% block content %}
+<!-- Global Summary Section -->
+<div class="daily-summary-section">
+    <div class="daily-summary-header">
+        <h2>📊 全局信息汇总</h2>
+        <p class="daily-summary-desc">聚合所有数据源，AI 生成综合摘要报告</p>
+    </div>
+    <div class="daily-summary-controls">
+        <div class="ds-range-selector" id="ds-range-selector">
+            <button class="ds-range-btn" data-days="1">最近 1 天</button>
+            <button class="ds-range-btn active" data-days="3">最近 3 天</button>
+            <button class="ds-range-btn" data-days="7">最近 7 天</button>
+        </div>
+        <button class="btn btn-daily-summary" id="btn-global-summary">🚀 生成全局摘要</button>
+        <button class="btn btn-secondary btn-sm" id="btn-global-summary-refresh" style="display:none;">🔄 重新生成</button>
+    </div>
+    <div id="global-summary-status" class="status hidden"></div>
+    <div id="global-summary-result" class="card hidden">
+        <div class="global-summary-meta" id="global-summary-meta"></div>
+        <div id="global-summary-content" class="digest-content"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/dashboard.js"></script>
+{% endblock %}

@@ -1,169 +1,188 @@
-<!DOCTYPE html>
-<html lang="en">
+{% extends "base.html" %}
+{% block title %}Settings - What's Going On{% endblock %}
 
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Settings - Email Watcher</title>
-  <link rel="stylesheet" href="/static/style.css">
-</head>
+{% block content %}
+<div id="status-bar" class="status hidden"></div>
 
-<body>
-  <header>
-    <div class="container">
-      <h1>Email Watcher</h1>
-      <nav>
-        <a href="/">Digest</a>
-        <a href="/settings" class="active">Settings</a>
-      </nav>
+<!-- ASF Authentication -->
+<div class="card">
+  <h2>🔐 ASF Authentication</h2>
+  <p style="color:#718096; font-size:0.9rem; margin-bottom:12px;">
+    Private Apache mailing lists require ASF login. Enter your ASF LDAP credentials below.
+  </p>
+
+  <div id="asf-auth-status" style="margin-bottom:16px;"></div>
+
+  <!-- Login with credentials (primary) -->
+  <div id="asf-login-section"
+    style="background:#f7fafc; border:1px solid #e2e8f0; border-radius:8px; padding:16px; margin-bottom:12px;">
+    <p style="font-weight:600; margin-bottom:10px; color:#2d3748;">Login with ASF Account</p>
+    <div class="form-group" style="margin-bottom:10px;">
+      <label for="asf-username">Username</label>
+      <input type="text" id="asf-username" placeholder="ASF LDAP username" autocomplete="username">
     </div>
-  </header>
-
-  <div class="container">
-    <div id="status-bar" class="status hidden"></div>
-
-    <!-- ASF Authentication -->
-    <div class="card">
-      <h2>🔐 ASF Authentication</h2>
-      <p style="color:#718096; font-size:0.9rem; margin-bottom:12px;">
-        Private Apache mailing lists require ASF login. Enter your ASF LDAP credentials below.
-      </p>
-
-      <div id="asf-auth-status" style="margin-bottom:16px;"></div>
-
-      <!-- Login with credentials (primary) -->
-      <div id="asf-login-section"
-        style="background:#f7fafc; border:1px solid #e2e8f0; border-radius:8px; padding:16px; margin-bottom:12px;">
-        <p style="font-weight:600; margin-bottom:10px; color:#2d3748;">Login with ASF Account</p>
-        <div class="form-group" style="margin-bottom:10px;">
-          <label for="asf-username">Username</label>
-          <input type="text" id="asf-username" placeholder="ASF LDAP username" autocomplete="username">
-        </div>
-        <div class="form-group" style="margin-bottom:12px;">
-          <label for="asf-password">Password</label>
-          <input type="password" id="asf-password" placeholder="ASF LDAP password" autocomplete="current-password">
-        </div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-          <button class="btn btn-primary" id="btn-asf-login">Login</button>
-          <button class="btn btn-danger" id="btn-asf-logout" style="margin-left:auto;">Logout</button>
-        </div>
-      </div>
-
-      <!-- Manual cookie (advanced, collapsible) -->
-      <details style="margin-top:4px;">
-        <summary style="cursor:pointer; color:#718096; font-size:0.85rem; user-select:none;">
-          Advanced: Manual cookie paste
-        </summary>
-        <div style="background:#f7fafc; border:1px solid #e2e8f0; border-radius:8px; padding:16px; margin-top:8px;">
-          <p style="font-size:0.85rem; color:#718096; margin-bottom:8px;">
-            If auto-login doesn't work, log in at
-            <a href="https://lists.apache.org/oauth.html" target="_blank" rel="noopener">lists.apache.org</a>,
-            then run <code>document.cookie</code> in the browser console and paste it below.
-          </p>
-          <div class="form-group" style="margin-bottom:10px;">
-            <label for="asf-cookie">Session Cookie</label>
-            <input type="password" id="asf-cookie" placeholder="Paste cookie string here...">
-          </div>
-          <div style="display:flex; gap:8px;">
-            <button class="btn btn-primary" id="btn-asf-verify">Verify &amp; Save</button>
-            <button class="btn btn-secondary" id="btn-asf-toggle-cookie">👁 Show</button>
-          </div>
-        </div>
-      </details>
+    <div class="form-group" style="margin-bottom:12px;">
+      <label for="asf-password">Password</label>
+      <input type="password" id="asf-password" placeholder="ASF LDAP password" autocomplete="current-password">
     </div>
-
-    <!-- LLM Providers -->
-    <div class="card">
-      <h2>LLM Providers</h2>
-      <p style="color:#718096; font-size:0.9rem; margin-bottom:12px;">
-        Configure one or more LLM providers. Select the active provider with the radio button.
-      </p>
-      <div id="providers-container"></div>
-
-      <h3 style="margin-top:16px; font-size:1rem;">Add New Provider</h3>
-      <div class="form-group">
-        <label for="new-provider-name">Display Name</label>
-        <input type="text" id="new-provider-name" placeholder="My Claude API">
-      </div>
-      <div class="form-group">
-        <label for="new-provider-type">Type</label>
-        <select id="new-provider-type">
-          <option value="anthropic">Anthropic (Claude)</option>
-          <option value="openai">OpenAI / Compatible</option>
-          <option value="google">Google (Gemini)</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="new-provider-base-url">Base URL <span style="color:#a0aec0; font-weight:normal;">(optional, leave
-            empty for default)</span></label>
-        <input type="text" id="new-provider-base-url" placeholder="https://api.anthropic.com">
-      </div>
-      <div class="form-group">
-        <label for="new-provider-auth-token">Auth Token</label>
-        <input type="password" id="new-provider-auth-token" placeholder="sk-...">
-      </div>
-      <div class="form-group">
-        <label for="new-provider-model">Model</label>
-        <input type="text" id="new-provider-model" value="claude-sonnet-4-20250514">
-      </div>
-      <div style="display:flex; gap:8px; margin-top:12px;">
-        <button class="btn btn-primary" id="btn-add-provider">Add Provider</button>
-      </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+      <button class="btn btn-primary" id="btn-asf-login">Login</button>
+      <button class="btn btn-danger" id="btn-asf-logout" style="margin-left:auto;">Logout</button>
     </div>
-
-    <!-- Mailing Lists -->
-    <div class="card">
-      <h2>Mailing Lists</h2>
-      <div id="lists-container"></div>
-
-      <h3 style="margin-top:16px; font-size:1rem;">Add New List</h3>
-      <div class="form-group">
-        <label for="new-list-name">Display Name</label>
-        <input type="text" id="new-list-name" placeholder="Apache Doris Dev">
-      </div>
-      <div class="form-group">
-        <label for="new-list-type">Type</label>
-        <select id="new-list-type">
-          <option value="ponymail">Pony Mail (Apache)</option>
-          <option value="pipermail">Pipermail (Mailman 2)</option>
-        </select>
-      </div>
-
-      <!-- Pony Mail fields -->
-      <div id="ponymail-fields">
-        <div class="form-group">
-          <label for="pm-base-url">Base URL</label>
-          <input type="text" id="pm-base-url" value="https://lists.apache.org">
-        </div>
-        <div class="form-group">
-          <label for="pm-list">List Name</label>
-          <input type="text" id="pm-list" placeholder="dev">
-        </div>
-        <div class="form-group">
-          <label for="pm-domain">Domain</label>
-          <input type="text" id="pm-domain" placeholder="doris.apache.org">
-        </div>
-      </div>
-
-      <!-- Pipermail fields -->
-      <div id="pipermail-fields" class="hidden">
-        <div class="form-group">
-          <label for="pip-base-url">Archive URL</label>
-          <input type="text" id="pip-base-url" placeholder="https://mail.python.org/pipermail/python-dev">
-        </div>
-      </div>
-
-      <div style="display:flex; gap:8px; margin-top:12px;">
-        <button class="btn btn-secondary" id="btn-test">Test Connection</button>
-        <button class="btn btn-primary" id="btn-add-list">Add List</button>
-      </div>
-    </div>
-
-    <!-- Save -->
-    <button class="btn btn-primary" id="btn-save" style="margin-top:8px;">Save All Settings</button>
   </div>
 
-  <script src="/static/settings.js"></script>
-</body>
+  <!-- Manual cookie (advanced, collapsible) -->
+  <details style="margin-top:4px;">
+    <summary style="cursor:pointer; color:#718096; font-size:0.85rem; user-select:none;">
+      Advanced: Manual cookie paste
+    </summary>
+    <div style="background:#f7fafc; border:1px solid #e2e8f0; border-radius:8px; padding:16px; margin-top:8px;">
+      <p style="font-size:0.85rem; color:#718096; margin-bottom:8px;">
+        If auto-login doesn't work, log in at
+        <a href="https://lists.apache.org/oauth.html" target="_blank" rel="noopener">lists.apache.org</a>,
+        then run <code>document.cookie</code> in the browser console and paste it below.
+      </p>
+      <div class="form-group" style="margin-bottom:10px;">
+        <label for="asf-cookie">Session Cookie</label>
+        <input type="password" id="asf-cookie" placeholder="Paste cookie string here...">
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-primary" id="btn-asf-verify">Verify &amp; Save</button>
+        <button class="btn btn-secondary" id="btn-asf-toggle-cookie">👁 Show</button>
+      </div>
+    </div>
+  </details>
+</div>
 
-</html>
+<!-- LLM Providers -->
+<div class="card">
+  <h2>🤖 LLM Providers</h2>
+  <p style="color:#718096; font-size:0.9rem; margin-bottom:12px;">
+    Configure one or more LLM providers. Select the active provider with the radio button.
+  </p>
+  <div id="providers-container"></div>
+
+  <h3 style="margin-top:16px; font-size:1rem;">Add New Provider</h3>
+  <div class="form-group">
+    <label for="new-provider-name">Display Name</label>
+    <input type="text" id="new-provider-name" placeholder="My Claude API">
+  </div>
+  <div class="form-group">
+    <label for="new-provider-type">Type</label>
+    <select id="new-provider-type">
+      <option value="anthropic">Anthropic (Claude)</option>
+      <option value="openai">OpenAI / Compatible</option>
+      <option value="google">Google (Gemini)</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label for="new-provider-base-url">Base URL <span style="color:#a0aec0; font-weight:normal;">(optional, leave
+        empty for default)</span></label>
+    <input type="text" id="new-provider-base-url" placeholder="https://api.anthropic.com">
+  </div>
+  <div class="form-group">
+    <label for="new-provider-auth-token">Auth Token</label>
+    <input type="password" id="new-provider-auth-token" placeholder="sk-...">
+  </div>
+  <div class="form-group">
+    <label for="new-provider-model">Model</label>
+    <input type="text" id="new-provider-model" value="claude-sonnet-4-20250514">
+  </div>
+  <div style="display:flex; gap:8px; margin-top:12px;">
+    <button class="btn btn-primary" id="btn-add-provider">Add Provider</button>
+  </div>
+</div>
+
+<!-- Mailing Lists -->
+<div class="card">
+  <h2>📧 Mailing Lists</h2>
+  <div id="lists-container"></div>
+
+  <h3 style="margin-top:16px; font-size:1rem;">Add New List</h3>
+  <div class="form-group">
+    <label for="new-list-name">Display Name</label>
+    <input type="text" id="new-list-name" placeholder="Apache Doris Dev">
+  </div>
+  <div class="form-group">
+    <label for="new-list-type">Type</label>
+    <select id="new-list-type">
+      <option value="ponymail">Pony Mail (Apache)</option>
+      <option value="pipermail">Pipermail (Mailman 2)</option>
+    </select>
+  </div>
+
+  <!-- Pony Mail fields -->
+  <div id="ponymail-fields">
+    <div class="form-group">
+      <label for="pm-base-url">Base URL</label>
+      <input type="text" id="pm-base-url" value="https://lists.apache.org">
+    </div>
+    <div class="form-group">
+      <label for="pm-list">List Name</label>
+      <input type="text" id="pm-list" placeholder="dev">
+    </div>
+    <div class="form-group">
+      <label for="pm-domain">Domain</label>
+      <input type="text" id="pm-domain" placeholder="doris.apache.org">
+    </div>
+  </div>
+
+  <!-- Pipermail fields -->
+  <div id="pipermail-fields" class="hidden">
+    <div class="form-group">
+      <label for="pip-base-url">Archive URL</label>
+      <input type="text" id="pip-base-url" placeholder="https://mail.python.org/pipermail/python-dev">
+    </div>
+  </div>
+
+  <div style="display:flex; gap:8px; margin-top:12px;">
+    <button class="btn btn-secondary" id="btn-test">Test Connection</button>
+    <button class="btn btn-primary" id="btn-add-list">Add List</button>
+  </div>
+</div>
+
+<!-- GitHub Repos -->
+<div class="card">
+  <h2>🐙 GitHub Repos</h2>
+  <p style="color:#718096; font-size:0.9rem; margin-bottom:12px;">
+    Configure public GitHub repositories to track PR and Issue activity. Token is optional (increases rate limit).
+  </p>
+  <div class="form-group">
+    <label for="github-token">Personal Access Token <span
+        style="color:#a0aec0; font-weight:normal;">(optional)</span></label>
+    <input type="password" id="github-token" placeholder="ghp_...">
+  </div>
+  <div id="github-repos-container"></div>
+
+  <h3 style="margin-top:16px; font-size:1rem;">Add New Repo</h3>
+  <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
+    <div class="form-group" style="flex:1; min-width:200px; margin-bottom:0;">
+      <label for="new-gh-repo">Repository <span style="color:#a0aec0; font-weight:normal;">(owner/repo)</span></label>
+      <input type="text" id="new-gh-repo" placeholder="apache/doris">
+    </div>
+    <div class="form-group" style="flex:1; min-width:150px; margin-bottom:0;">
+      <label for="new-gh-name">Display Name</label>
+      <input type="text" id="new-gh-name" placeholder="Apache Doris">
+    </div>
+    <button class="btn btn-primary" id="btn-add-gh-repo" style="height:38px;">Add Repo</button>
+  </div>
+</div>
+
+<!-- Slack (Coming Soon) -->
+<div class="card">
+  <h2>💬 Slack</h2>
+  <div class="coming-soon-inline">
+    <span class="coming-soon-badge">🚧 Coming Soon</span>
+    <p style="color:#718096; font-size:0.9rem; margin-top:8px;">
+      Slack 集成功能将在下一版本推出。届时可在此配置 OAuth 凭据和监控频道。
+    </p>
+  </div>
+</div>
+
+<!-- Save -->
+<button class="btn btn-primary" id="btn-save" style="margin-top:8px;">💾 Save All Settings</button>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/settings.js"></script>
+{% endblock %}

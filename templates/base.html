@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}What's Going On{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    {% block head %}{% endblock %}
+</head>
+
+<body>
+    <header>
+        <div class="container">
+            <h1><a href="/" class="logo-link">🔮 What's Going On</a></h1>
+            <nav>
+                <a href="/" {% if active_page=='dashboard' %}class="active" {% endif %}>Dashboard</a>
+                <a href="/email" {% if active_page=='email' %}class="active" {% endif %}>Email</a>
+                <a href="/slack" {% if active_page=='slack' %}class="active" {% endif %}>Slack</a>
+                <a href="/github" {% if active_page=='github' %}class="active" {% endif %}>GitHub</a>
+                <a href="/settings" {% if active_page=='settings' %}class="active" {% endif %}>Settings</a>
+            </nav>
+        </div>
+    </header>
+
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+
+    {% block scripts %}{% endblock %}
+</body>
+
+</html>

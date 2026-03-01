@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# build.sh — 构建 Email Watcher 并将所有运行所需文件打包到 output/ 目录
+# build.sh — 构建 What's Going On 并将所有运行所需文件打包到 output/ 目录
 # 兼容 macOS 和 Linux
 #
 set -euo pipefail
@@ -10,7 +10,7 @@ OUTPUT_DIR="${SCRIPT_DIR}/output"
 VENV_DIR="${OUTPUT_DIR}/venv"
 
 echo "=============================="
-echo "  Email Watcher — Build"
+echo "  What's Going On — Build"
 echo "=============================="
 echo ""
 
@@ -59,15 +59,28 @@ cp "$SCRIPT_DIR/fetchers/__init__.py" "$OUTPUT_DIR/fetchers/"
 cp "$SCRIPT_DIR/fetchers/ponymail.py" "$OUTPUT_DIR/fetchers/"
 cp "$SCRIPT_DIR/fetchers/pipermail.py" "$OUTPUT_DIR/fetchers/"
 
+# 复制 sources 模块
+mkdir -p "$OUTPUT_DIR/sources"
+cp "$SCRIPT_DIR/sources/__init__.py" "$OUTPUT_DIR/sources/"
+cp "$SCRIPT_DIR/sources/github.py" "$OUTPUT_DIR/sources/"
+cp "$SCRIPT_DIR/sources/slack.py" "$OUTPUT_DIR/sources/"
+
 # 复制前端静态文件
 mkdir -p "$OUTPUT_DIR/static"
 cp "$SCRIPT_DIR/static/style.css" "$OUTPUT_DIR/static/"
 cp "$SCRIPT_DIR/static/app.js" "$OUTPUT_DIR/static/"
 cp "$SCRIPT_DIR/static/settings.js" "$OUTPUT_DIR/static/"
+cp "$SCRIPT_DIR/static/dashboard.js" "$OUTPUT_DIR/static/"
+cp "$SCRIPT_DIR/static/github.js" "$OUTPUT_DIR/static/"
 
 # 复制 HTML 模板
 mkdir -p "$OUTPUT_DIR/templates"
+cp "$SCRIPT_DIR/templates/base.html" "$OUTPUT_DIR/templates/"
 cp "$SCRIPT_DIR/templates/index.html" "$OUTPUT_DIR/templates/"
+cp "$SCRIPT_DIR/templates/dashboard.html" "$OUTPUT_DIR/templates/"
+cp "$SCRIPT_DIR/templates/email.html" "$OUTPUT_DIR/templates/"
+cp "$SCRIPT_DIR/templates/github.html" "$OUTPUT_DIR/templates/"
+cp "$SCRIPT_DIR/templates/slack.html" "$OUTPUT_DIR/templates/"
 cp "$SCRIPT_DIR/templates/settings.html" "$OUTPUT_DIR/templates/"
 
 # 复制配置模板

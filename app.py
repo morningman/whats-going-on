@@ -1,4 +1,4 @@
-"""Email Watcher - Flask application for mailing list monitoring and daily digests."""
+"""What's Going On - Information aggregation center for email lists, Slack, and GitHub."""
 
 import copy
 import json
@@ -132,6 +132,18 @@ def _mask_tokens(config: dict) -> dict:
     password = asf.get("password", "")
     if password:
         asf["password"] = "***"
+    # Mask GitHub token
+    gh_token = safe.get("github", {}).get("token", "")
+    if gh_token and len(gh_token) > 12:
+        safe["github"]["token"] = gh_token[:8] + "..." + gh_token[-4:]
+    elif gh_token:
+        safe.setdefault("github", {})["token"] = "***"
+    # Mask Slack tokens
+    slack_token = safe.get("slack", {}).get("user_token", "")
+    if slack_token and len(slack_token) > 12:
+        safe["slack"]["user_token"] = slack_token[:8] + "..." + slack_token[-4:]
+    elif slack_token:
+        safe.setdefault("slack", {})["user_token"] = "***"
     return safe
 
 
@@ -166,6 +178,21 @@ def _restore_masked_tokens(new_config: dict) -> dict:
     password = new_asf.get("password", "")
     if password == "***":
         new_asf["password"] = old_asf.get("password", "")
+
+    # Restore masked GitHub token
+    old_gh = old_config.get("github", {})
+    new_gh = new_config.get("github", {})
+    gh_token = new_gh.get("token", "")
+    if gh_token and ("..." in gh_token or gh_token == "***"):
+        new_gh["token"] = old_gh.get("token", "")
+
+    # Restore masked Slack token
+    old_slack = old_config.get("slack", {})
+    new_slack = new_config.get("slack", {})
+    slack_token = new_slack.get("user_token", "")
+    if slack_token and ("..." in slack_token or slack_token == "***"):
+        new_slack["user_token"] = old_slack.get("user_token", "")
+
     return new_config
 
 
@@ -179,13 +206,28 @@ def save_config(config: dict):
 # --- Page routes ---
 
 @app.route("/")
-def index():
-    return render_template("index.html")
+def dashboard():
+    return render_template("dashboard.html", active_page="dashboard")
+
+
+@app.route("/email")
+def email_page():
+    return render_template("email.html", active_page="email")
+
+
+@app.route("/slack")
+def slack_page():
+    return render_template("slack.html", active_page="slack")
+
+
+@app.route("/github")
+def github_page():
+    return render_template("github.html", active_page="github")
 
 
 @app.route("/settings")
 def settings():
-    return render_template("settings.html")
+    return render_template("settings.html", active_page="settings")
 
 
 # --- Config API ---
@@ -541,6 +583,126 @@ def api_test_connection():
         return jsonify({"ok": False, "message": str(e)})
 
 
+# --- GitHub API ---
+
+@app.route("/api/github/repos")
+def api_github_repos():
+    """Return configured GitHub repos."""
+    config = load_config()
+    repos = config.get("github", {}).get("repos", [])
+    logger.debug("GET /api/github/repos — returning %d repos", len(repos))
+    return jsonify(repos)
+
+
+@app.route("/api/github/activity")
+def api_github_activity():
+    """Fetch recent PR and Issue activity for a repo."""
+    repo_id = request.args.get("repo_id", "")
+    try:
+        days = int(request.args.get("days", "3"))
+    except ValueError:
+        days = 3
+    if days not in (1, 3, 7):
+        days = 3
+
+    if not repo_id:
+        return jsonify({"error": "repo_id is required"}), 400
+
+    config = load_config()
+    gh_config = config.get("github", {})
+    repos = gh_config.get("repos", [])
+    repo = None
+    for r in repos:
+        if r["id"] == repo_id:
+            repo = r
+            break
+    if not repo:
+        return jsonify({"error": f"Repo '{repo_id}' not found"}), 404
+
+    logger.info("GET /api/github/activity — repo=%s/%s, days=%d", repo["owner"], repo["repo"], days)
+    try:
+        from sources.github import GitHubSource
+        gh = GitHubSource()
+        token = gh_config.get("token", "")
+        activity = gh.fetch_activity(repo["owner"], repo["repo"], days=days, token=token)
+        return jsonify(activity)
+    except Exception as e:
+        logger.exception("GET /api/github/activity — error")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/github/digest", methods=["GET", "POST"])
+def api_github_digest():
+    """Generate or retrieve a GitHub activity digest."""
+    repo_id = request.args.get("repo_id", "")
+    try:
+        days = int(request.args.get("days", "3"))
+    except ValueError:
+        days = 3
+
+    if not repo_id:
+        return jsonify({"error": "repo_id is required"}), 400
+
+    config = load_config()
+    gh_config = config.get("github", {})
+    repos = gh_config.get("repos", [])
+    repo = None
+    for r in repos:
+        if r["id"] == repo_id:
+            repo = r
+            break
+    if not repo:
+        return jsonify({"error": f"Repo '{repo_id}' not found"}), 404
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    cache_key = f"github__{repo_id}__{today}__{days}d"
+
+    if request.method == "GET":
+        cached = summarizer.load_digest(cache_key, "")
+        if cached:
+            return jsonify(cached)
+        return jsonify({"summary": None})
+
+    # POST — generate digest
+    logger.info("POST /api/github/digest — repo=%s/%s, days=%d", repo["owner"], repo["repo"], days)
+    try:
+        from sources.github import GitHubSource
+        gh = GitHubSource()
+        token = gh_config.get("token", "")
+        activity = gh.fetch_activity(repo["owner"], repo["repo"], days=days, token=token)
+
+        llm_config = config.get("llm", {})
+        digest = summarizer.generate_github_digest(
+            activity, repo_id, f"{repo['owner']}/{repo['repo']}", days, llm_config, cache_key
+        )
+        return jsonify(digest)
+    except Exception as e:
+        logger.exception("POST /api/github/digest — error")
+        return jsonify({"error": str(e)}), 500
+
+
+# --- Slack API (stub — Coming Soon) ---
+
+@app.route("/api/slack/status")
+def api_slack_status():
+    return jsonify({"connected": False, "message": "Slack integration coming soon"}), 501
+
+
+@app.route("/api/slack/channels")
+def api_slack_channels():
+    return jsonify({"error": "Slack integration coming soon"}), 501
+
+
+@app.route("/api/slack/messages")
+def api_slack_messages():
+    return jsonify({"error": "Slack integration coming soon"}), 501
+
+
+@app.route("/api/slack/digest", methods=["POST"])
+def api_slack_digest():
+    return jsonify({"error": "Slack integration coming soon"}), 501
+
+
 # --- Helpers ---
 
 def _find_list(config: dict, list_id: str) -> dict | None:
@@ -603,5 +765,5 @@ def auto_login_asf():
 if __name__ == "__main__":
     setup_logging()
     auto_login_asf()
-    logger.info("Starting Email Watcher in development mode on port 5000")
+    logger.info("Starting What's Going On in development mode on port 5000")
     app.run(debug=True, port=5000)

@@ -76,7 +76,7 @@ class PonyMailFetcher(BaseFetcher):
         params = {"list": list_name, "domain": domain, "d": year_month}
 
         logger.info("[PonyMail] Fetching mbox from %s params=%s", url, params)
-        resp = self._request_with_retry("GET", url, cookie, params=params)
+        resp = self._request_with_retry("GET", url, cookie, params=params, timeout=120)
         resp.raise_for_status()
         logger.info("[PonyMail] Response: status=%d, content_length=%d", resp.status_code, len(resp.text))
 

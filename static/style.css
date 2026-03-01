@@ -717,3 +717,155 @@ kbd {
   white-space: nowrap;
   flex-shrink: 0;
 }
+
+/* Logo link */
+.logo-link {
+  text-decoration: none;
+  color: inherit;
+}
+
+.logo-link:hover {
+  opacity: 0.85;
+}
+
+/* Page header */
+.page-header {
+  margin-bottom: 20px;
+}
+
+.page-title {
+  font-size: 1.3rem;
+  color: #1a202c;
+  margin-bottom: 4px;
+}
+
+.page-desc {
+  color: #718096;
+  font-size: 0.9rem;
+}
+
+/* GitHub items */
+.gh-item {
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: #fff;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.gh-item:hover {
+  border-color: #cbd5e0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.gh-item-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.gh-state {
+  flex-shrink: 0;
+  font-size: 0.85rem;
+}
+
+.gh-item-title {
+  color: #2b6cb0;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.95rem;
+  flex: 1;
+}
+
+.gh-item-title:hover {
+  color: #1a4d8f;
+  text-decoration: underline;
+}
+
+.gh-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 0.82rem;
+  color: #718096;
+}
+
+.gh-label {
+  display: inline-block;
+  background: #ebf4ff;
+  color: #2b6cb0;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.gh-draft {
+  display: inline-block;
+  background: #f0fff4;
+  color: #276749;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.gh-empty {
+  color: #a0aec0;
+  font-size: 0.9rem;
+  padding: 20px 0;
+  text-align: center;
+}
+
+/* Coming Soon */
+.coming-soon-card {
+  text-align: center;
+  padding: 60px 30px;
+}
+
+.coming-soon-icon {
+  font-size: 3rem;
+  margin-bottom: 16px;
+}
+
+.coming-soon-card h3 {
+  font-size: 1.4rem;
+  color: #2d3748;
+  margin-bottom: 8px;
+}
+
+.coming-soon-card p {
+  color: #718096;
+  font-size: 0.95rem;
+  margin-bottom: 20px;
+}
+
+.coming-soon-features {
+  list-style: none;
+  padding: 0;
+  display: inline-block;
+  text-align: left;
+}
+
+.coming-soon-features li {
+  padding: 6px 0;
+  color: #4a5568;
+  font-size: 0.9rem;
+}
+
+.coming-soon-inline {
+  padding: 12px 0;
+}
+
+.coming-soon-badge {
+  display: inline-block;
+  background: #fefcbf;
+  color: #975a16;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}

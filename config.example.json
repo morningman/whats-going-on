@@ -38,8 +38,41 @@
         "base_url": "",
         "auth_token": "",
         "model": "claude-sonnet-4-20250514"
+      },
+      {
+        "id": "openai",
+        "name": "OpenAI GPT",
+        "type": "openai",
+        "base_url": "",
+        "auth_token": "",
+        "model": "gpt-4o"
+      },
+      {
+        "id": "google",
+        "name": "Google Gemini",
+        "type": "google",
+        "base_url": "",
+        "auth_token": "",
+        "model": "gemini-2.0-flash"
       }
     ]
+  },
+  "github": {
+    "token": "",
+    "repos": [
+      {
+        "id": "apache-doris",
+        "name": "Apache Doris",
+        "owner": "apache",
+        "repo": "doris"
+      }
+    ]
+  },
+  "slack": {
+    "client_id": "",
+    "client_secret": "",
+    "user_token": "",
+    "channels": []
   },
   "fetch_days": 7
 }

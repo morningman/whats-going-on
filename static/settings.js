@@ -1,4 +1,7 @@
-/* Email Watcher - Settings page logic */
+/* What's Going On - Settings page logic */
+
+const githubReposContainer = document.getElementById('github-repos-container');
+const githubTokenInput = document.getElementById('github-token');
 
 const statusBar = document.getElementById('status-bar');
 const providersContainer = document.getElementById('providers-container');
@@ -389,6 +392,66 @@ document.getElementById('btn-add-list').addEventListener('click', () => {
   showStatus('List added. Click "Save All Settings" to persist.', 'info');
 });
 
+// --- GitHub Repo Management ---
+
+function renderGithubRepos() {
+  githubReposContainer.innerHTML = '';
+  const repos = currentConfig?.github?.repos || [];
+  if (repos.length === 0) {
+    githubReposContainer.innerHTML = '<p style="color:#718096;">No GitHub repos configured.</p>';
+    return;
+  }
+  repos.forEach((r, idx) => {
+    const div = document.createElement('div');
+    div.className = 'list-item';
+    div.innerHTML = `
+      <div class="info">
+        <div class="name">${escapeHtml(r.name)}</div>
+        <div class="detail">${escapeHtml(r.owner)}/${escapeHtml(r.repo)}</div>
+      </div>
+      <button class="btn btn-danger btn-sm" data-idx="${idx}">Remove</button>
+    `;
+    div.querySelector('button').addEventListener('click', () => {
+      currentConfig.github.repos.splice(idx, 1);
+      renderGithubRepos();
+    });
+    githubReposContainer.appendChild(div);
+  });
+}
+
+document.getElementById('btn-add-gh-repo').addEventListener('click', () => {
+  const repoStr = document.getElementById('new-gh-repo').value.trim();
+  const displayName = document.getElementById('new-gh-name').value.trim();
+  if (!repoStr) {
+    showStatus('Please enter a repository (owner/repo).', 'error');
+    return;
+  }
+  const parts = repoStr.split('/');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    showStatus('Repository format should be owner/repo (e.g., apache/doris).', 'error');
+    return;
+  }
+  const owner = parts[0].trim();
+  const repo = parts[1].trim();
+  const name = displayName || `${owner}/${repo}`;
+  const id = `${owner}-${repo}`.toLowerCase();
+
+  if (!currentConfig.github) currentConfig.github = { token: '', repos: [] };
+  if (!currentConfig.github.repos) currentConfig.github.repos = [];
+
+  if (currentConfig.github.repos.some(r => r.id === id)) {
+    showStatus('This repo is already configured.', 'error');
+    return;
+  }
+
+  currentConfig.github.repos.push({ id, name, owner, repo });
+  renderGithubRepos();
+
+  document.getElementById('new-gh-repo').value = '';
+  document.getElementById('new-gh-name').value = '';
+  showStatus('Repo added. Click "Save All Settings" to persist.', 'info');
+});
+
 // --- Load & Save ---
 
 async function loadConfig() {
@@ -397,6 +460,9 @@ async function loadConfig() {
     currentConfig = await resp.json();
     renderProviders();
     renderLists();
+    renderGithubRepos();
+    // Load GitHub token
+    githubTokenInput.value = currentConfig?.github?.token || '';
   } catch (e) {
     showStatus('Failed to load config', 'error');
   }
@@ -404,6 +470,10 @@ async function loadConfig() {
 
 // Save all settings
 document.getElementById('btn-save').addEventListener('click', async () => {
+  // Update GitHub token from input
+  if (!currentConfig.github) currentConfig.github = { token: '', repos: [] };
+  currentConfig.github.token = githubTokenInput.value.trim();
+
   try {
     const resp = await fetch('/api/config', {
       method: 'POST',
