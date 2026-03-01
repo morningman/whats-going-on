@@ -1,41 +1,39 @@
-/* Email Watcher - Main page logic */
+/* Email page logic — single combined flow (mirrors github.js) */
 
 const listSelect = document.getElementById('list-select');
-const datePicker = document.getElementById('date-picker');
-const btnLoad = document.getElementById('btn-load');
-const btnDigest = document.getElementById('btn-digest');
-const statusBar = document.getElementById('status-bar');
+const emailRangeSelector = document.getElementById('email-range-selector');
+const emailLangSelector = document.getElementById('email-lang-selector');
+const btnEmailRun = document.getElementById('btn-email-run');
+const emailStatus = document.getElementById('email-status');
+const emailProgressLog = document.getElementById('email-progress-log');
 const digestSection = document.getElementById('digest-section');
 const digestContent = document.getElementById('digest-content');
 const emailsSection = document.getElementById('emails-section');
 const emailCount = document.getElementById('email-count');
 const emailList = document.getElementById('email-list');
 
-// Daily Summary elements
-const btnDailySummary = document.getElementById('btn-daily-summary');
-const btnDailySummaryRefresh = document.getElementById('btn-daily-summary-refresh');
-const dailySummaryStatus = document.getElementById('daily-summary-status');
-const dailySummaryResult = document.getElementById('daily-summary-result');
-const dsRangeSelector = document.getElementById('ds-range-selector');
+let selectedEmailDays = 3;
+let selectedEmailLang = 'zh';
 
-// Track selected days (default 3)
-let selectedDays = 3;
-
-// Range selector event
-dsRangeSelector.addEventListener('click', function (e) {
+// Range selector
+emailRangeSelector.addEventListener('click', function (e) {
   const btn = e.target.closest('.ds-range-btn');
   if (!btn) return;
-  dsRangeSelector.querySelectorAll('.ds-range-btn').forEach(b => b.classList.remove('active'));
+  emailRangeSelector.querySelectorAll('.ds-range-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  selectedDays = parseInt(btn.dataset.days, 10);
-  // Try loading cached summary for the new range
-  loadCachedDailySummary();
+  selectedEmailDays = parseInt(btn.dataset.days, 10);
 });
 
-// Set default date to today
-datePicker.value = new Date().toISOString().split('T')[0];
+// Language selector
+emailLangSelector.addEventListener('click', function (e) {
+  const btn = e.target.closest('.ds-range-btn');
+  if (!btn) return;
+  emailLangSelector.querySelectorAll('.ds-range-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  selectedEmailLang = btn.dataset.lang;
+});
 
-// Load mailing lists on page load
+// Load mailing lists
 async function loadLists() {
   try {
     const resp = await fetch('/api/lists');
@@ -46,35 +44,29 @@ async function loadLists() {
       opt.textContent = `${l.name} (${l.type})`;
       listSelect.appendChild(opt);
     });
+    if (lists.length === 0) {
+      showEmailStatus('请先在 Settings 页面添加邮件组', 'info');
+    }
   } catch (e) {
-    showStatus('Failed to load mailing lists', 'error');
+    showEmailStatus('加载邮件组列表失败: ' + e.message, 'error');
   }
 }
 
-function showStatus(msg, type) {
-  statusBar.textContent = msg;
-  statusBar.className = `status status-${type}`;
-  statusBar.classList.remove('hidden');
+function showEmailStatus(msg, type) {
+  emailStatus.textContent = msg;
+  emailStatus.className = `status status-${type}`;
+  emailStatus.classList.remove('hidden');
 }
 
-function hideStatus() {
-  statusBar.classList.add('hidden');
+function hideEmailStatus() {
+  emailStatus.classList.add('hidden');
 }
 
-function showDailySummaryStatus(msg, type) {
-  dailySummaryStatus.textContent = msg;
-  dailySummaryStatus.className = `status status-${type}`;
-  dailySummaryStatus.classList.remove('hidden');
-}
-
-function hideDailySummaryStatus() {
-  dailySummaryStatus.classList.add('hidden');
-}
-
-// ===== Markdown rendering helper =====
+// --- Markdown rendering helper ---
 
 function renderMarkdown(text) {
   let html = escapeHtml(text || '');
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
   html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
   html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
   html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
@@ -86,245 +78,114 @@ function renderMarkdown(text) {
   return '<p>' + html + '</p>';
 }
 
-// ===== Daily Summary =====
-
-async function generateDailySummary(force = false) {
-  btnDailySummary.disabled = true;
-  btnDailySummary.innerHTML = '<span class="spinner"></span>正在生成摘要（可能需要 1-2 分钟）...';
-  btnDailySummaryRefresh.style.display = 'none';
-  hideDailySummaryStatus();
-  dailySummaryResult.classList.add('hidden');
-  dailySummaryResult.innerHTML = '';
-
-  try {
-    const params = new URLSearchParams({ days: selectedDays });
-    if (force) params.set('force', 'true');
-    const resp = await fetch(`/api/daily-summary?${params}`, { method: 'POST' });
-    const data = await resp.json();
-    if (data.error) {
-      showDailySummaryStatus(data.error, 'error');
-      return;
-    }
-    renderDailySummary(data);
-    showDailySummaryStatus('摘要生成成功！', 'success');
-  } catch (e) {
-    showDailySummaryStatus('生成摘要失败: ' + e.message, 'error');
-  } finally {
-    btnDailySummary.disabled = false;
-    btnDailySummary.textContent = '📋 生成摘要';
-  }
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
 }
 
-async function loadCachedDailySummary() {
-  try {
-    const resp = await fetch(`/api/daily-summary?days=${selectedDays}`);
-    const data = await resp.json();
-    if (data.lists) {
-      renderDailySummary(data);
-    }
-  } catch (e) {
-    // No cached summary
-  }
+// --- Progress Log ---
+
+const ICON_MAP = {
+  progress: '⏳',
+  done: '✅',
+  error: '❌',
+  retry: '🔄',
+};
+
+function clearProgressLog() {
+  emailProgressLog.innerHTML = '';
+  emailProgressLog.classList.add('hidden');
 }
 
-function renderDailySummary(data) {
-  dailySummaryResult.classList.remove('hidden');
-  btnDailySummaryRefresh.style.display = 'inline-block';
-
-  const lists = data.lists || [];
-  const dates = data.dates || [];
-  const emailMeta = data.email_meta || {};
-  const numDays = dates.length;
-
-  // Build the complete HTML
-  let html = '';
-
-  // --- Meta bar ---
-  html += '<div class="daily-summary-meta">';
-  if (dates.length > 0) {
-    html += `<span class="meta-tag">📅 ${dates[0]} ~ ${dates[dates.length - 1]}</span>`;
+function appendProgressItem(type, message) {
+  emailProgressLog.classList.remove('hidden');
+  const item = document.createElement('div');
+  item.className = `progress-item progress-${type}`;
+  const icon = ICON_MAP[type] || '📌';
+  const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  item.innerHTML = `<span class="progress-time">${time}</span> <span class="progress-icon">${icon}</span> <span class="progress-msg">${escapeHtml(message)}</span>`;
+  if (type === 'progress') {
+    item.classList.add('progress-active');
   }
-  if (data.total_emails !== undefined) {
-    html += `<span class="meta-tag">📧 共 ${data.total_emails} 封邮件</span>`;
-  }
-  html += `<span class="meta-tag">📋 ${lists.length} 个邮件组</span>`;
-  if (data.generated_at) {
-    const genTime = new Date(data.generated_at).toLocaleString('zh-CN');
-    html += `<span class="meta-tag meta-time">⏱️ ${genTime}</span>`;
-  }
-  html += '</div>';
+  emailProgressLog.appendChild(item);
+  emailProgressLog.scrollTop = emailProgressLog.scrollHeight;
+}
 
-  // --- Warnings ---
-  if (data.warnings && data.warnings.length > 0) {
-    html += '<div class="daily-summary-warnings">';
-    data.warnings.forEach(w => {
-      html += `<div class="warning-item">⚠️ ${escapeHtml(w)}</div>`;
-    });
-    html += '</div>';
-  }
-  if (data.skipped_lists && data.skipped_lists.length > 0) {
-    html += `<div class="daily-summary-warnings"><div class="warning-item">⏭️ 已跳过未认证的私有邮件组: ${escapeHtml(data.skipped_lists.join(', '))}</div></div>`;
-  }
-
-  // --- Tab navigation ---
-  if (lists.length === 0) {
-    html += '<p style="color:#718096;">无可显示的邮件组</p>';
-    dailySummaryResult.innerHTML = html;
-    return;
-  }
-
-  html += '<div class="ds-tabs">';
-  html += '<div class="ds-tab-nav" role="tablist">';
-  lists.forEach((list, idx) => {
-    const emailCount = data.statistics?.[list.name]?.total || 0;
-    const activeClass = idx === 0 ? ' active' : '';
-    html += `<button class="ds-tab-btn${activeClass}" data-tab="ds-tab-${idx}" role="tab">${escapeHtml(list.name)}<span class="ds-tab-count">${emailCount}</span></button>`;
+function markProgressComplete() {
+  emailProgressLog.querySelectorAll('.progress-active').forEach(el => {
+    el.classList.remove('progress-active');
   });
-  html += '</div>';
-
-  // --- Tab panels ---
-  lists.forEach((list, idx) => {
-    const hiddenClass = idx === 0 ? '' : ' hidden';
-    html += `<div class="ds-tab-panel${hiddenClass}" id="ds-tab-${idx}" role="tabpanel">`;
-
-    // Overview section
-    const overviewLabel = numDays === 1 ? '📊 当日总览' : `📊 ${numDays}日总览`;
-    html += '<div class="ds-overview">';
-    html += `<h3 class="ds-section-label">${overviewLabel}</h3>`;
-    html += `<div class="ds-overview-content digest-content">${renderMarkdown(list.overview)}</div>`;
-    html += '</div>';
-
-    // Day buttons
-    const days = list.days || [];
-    if (days.length > 0) {
-      html += '<div class="ds-day-section">';
-      html += '<h3 class="ds-section-label">📅 每日详情</h3>';
-      html += '<div class="ds-day-btns">';
-      days.forEach((day, dayIdx) => {
-        const dayCount = data.statistics?.[list.name]?.per_day?.[day.date] || 0;
-        html += `<button class="ds-day-btn" data-panel="ds-tab-${idx}" data-day="${dayIdx}">`;
-        html += `<span class="ds-day-date">${day.date}</span>`;
-        html += `<span class="ds-day-count">${dayCount} 封</span>`;
-        html += `</button>`;
-      });
-      html += '</div>';
-
-      // Day detail panels (hidden by default)
-      days.forEach((day, dayIdx) => {
-        html += `<div class="ds-day-detail hidden" id="ds-day-${idx}-${dayIdx}">`;
-        html += `<h4>${day.date} 摘要</h4>`;
-        html += `<div class="digest-content">${renderMarkdown(day.summary)}</div>`;
-
-        // --- Email links for this day ---
-        const listMeta = emailMeta[list.name] || {};
-        const dayEmails = listMeta[day.date] || [];
-        if (dayEmails.length > 0) {
-          html += '<div class="ds-email-links">';
-          html += '<h5 class="ds-email-links-title">📨 相关邮件</h5>';
-          html += '<ul class="ds-email-list">';
-          dayEmails.forEach(em => {
-            const subject = escapeHtml(em.subject || '(no subject)');
-            const from = escapeHtml(em.from || '');
-            if (em.link) {
-              html += `<li class="ds-email-link-item">`;
-              html += `<a href="${escapeHtml(em.link)}" target="_blank" rel="noopener" class="ds-email-link">🔗 ${subject}</a>`;
-              html += `<span class="ds-email-from">${from}</span>`;
-              html += `</li>`;
-            } else {
-              html += `<li class="ds-email-link-item">`;
-              html += `<span class="ds-email-nolink">${subject}</span>`;
-              html += `<span class="ds-email-from">${from}</span>`;
-              html += `</li>`;
-            }
-          });
-          html += '</ul>';
-          html += '</div>';
-        }
-
-        html += '</div>';
-      });
-      html += '</div>';
-    }
-
-    html += '</div>'; // tab panel
-  });
-
-  html += '</div>'; // ds-tabs
-
-  dailySummaryResult.innerHTML = html;
 }
 
-// --- Event delegation for tabs and day buttons (registered once) ---
-dailySummaryResult.addEventListener('click', function (e) {
-  // Tab switching
-  const tabBtn = e.target.closest('.ds-tab-btn');
-  if (tabBtn) {
-    const targetId = tabBtn.dataset.tab;
-    // Deactivate all tabs
-    dailySummaryResult.querySelectorAll('.ds-tab-btn').forEach(b => b.classList.remove('active'));
-    dailySummaryResult.querySelectorAll('.ds-tab-panel').forEach(p => p.classList.add('hidden'));
-    // Activate clicked tab
-    tabBtn.classList.add('active');
-    document.getElementById(targetId).classList.remove('hidden');
-    return;
-  }
+// --- Combined SSE flow: load emails → render → generate digest ---
 
-  // Day button toggle
-  const dayBtn = e.target.closest('.ds-day-btn');
-  if (dayBtn) {
-    const panelId = dayBtn.dataset.panel;
-    const dayIdx = dayBtn.dataset.day;
-    const detailId = `ds-day-${panelId.split('-').pop()}-${dayIdx}`;
-    const detail = document.getElementById(detailId);
-    if (detail) {
-      const isVisible = !detail.classList.contains('hidden');
-      // Collapse all day details in this panel
-      const panel = document.getElementById(panelId);
-      panel.querySelectorAll('.ds-day-detail').forEach(d => d.classList.add('hidden'));
-      panel.querySelectorAll('.ds-day-btn').forEach(b => b.classList.remove('active'));
-      // Toggle
-      if (!isVisible) {
-        detail.classList.remove('hidden');
-        dayBtn.classList.add('active');
-      }
-    }
-    return;
-  }
-});
-
-// ===== Existing per-list email/digest functions =====
-
-async function loadEmails() {
+function runCombinedFlow() {
   const listId = listSelect.value;
-  const date = datePicker.value;
-  if (!listId || !date) {
-    showStatus('Please select a mailing list and date.', 'info');
+  if (!listId) {
+    showEmailStatus('请选择一个邮件组', 'info');
     return;
   }
 
-  hideStatus();
-  btnLoad.disabled = true;
-  btnLoad.textContent = 'Loading...';
+  hideEmailStatus();
+  clearProgressLog();
+  btnEmailRun.disabled = true;
+  btnEmailRun.innerHTML = '<span class="spinner"></span>加载中...';
   emailsSection.classList.add('hidden');
   digestSection.classList.add('hidden');
 
-  try {
-    const resp = await fetch(`/api/emails?list_id=${listId}&date=${date}`);
-    const data = await resp.json();
-    if (data.error) {
-      showStatus(data.error, 'error');
+  const url = `/api/email/digest/stream?list_id=${encodeURIComponent(listId)}&days=${selectedEmailDays}&lang=${selectedEmailLang}`;
+  const es = new EventSource(url);
+
+  es.onmessage = function (e) {
+    let event;
+    try {
+      event = JSON.parse(e.data);
+    } catch {
       return;
     }
-    renderEmails(data.emails || []);
-    btnDigest.disabled = false;
-    loadCachedDigest(listId, date);
-  } catch (e) {
-    showStatus('Failed to load emails: ' + e.message, 'error');
-  } finally {
-    btnLoad.disabled = false;
-    btnLoad.textContent = 'Load Emails';
-  }
+
+    if (event.type === 'progress') {
+      appendProgressItem('progress', event.message);
+    } else if (event.type === 'retry') {
+      appendProgressItem('retry', event.message);
+    } else if (event.type === 'emails_loaded') {
+      // Email data fetched — render immediately
+      markProgressComplete();
+      appendProgressItem('done', '邮件加载完成，开始生成摘要...');
+      renderEmails(event.data.emails || []);
+      btnEmailRun.innerHTML = '<span class="spinner"></span>生成摘要中...';
+    } else if (event.type === 'error') {
+      appendProgressItem('error', event.message);
+      markProgressComplete();
+      showEmailStatus(event.message, 'error');
+      es.close();
+      resetButton();
+    } else if (event.type === 'done') {
+      markProgressComplete();
+      appendProgressItem('done', '摘要生成成功！');
+      es.close();
+      renderDigest(event.data);
+      showEmailStatus('加载完成，摘要已生成！', 'success');
+      resetButton();
+    }
+  };
+
+  es.onerror = function () {
+    es.close();
+    markProgressComplete();
+    appendProgressItem('error', '连接中断，请重试');
+    showEmailStatus('连接中断', 'error');
+    resetButton();
+  };
 }
+
+function resetButton() {
+  btnEmailRun.disabled = false;
+  btnEmailRun.textContent = '加载邮件并生成摘要';
+}
+
+// --- Rendering ---
 
 function renderEmails(emails) {
   emailCount.textContent = emails.length;
@@ -332,8 +193,7 @@ function renderEmails(emails) {
   emailsSection.classList.remove('hidden');
 
   if (emails.length === 0) {
-    emailList.innerHTML = '<p style="color:#718096;">No emails found for this date.</p>';
-    btnDigest.disabled = true;
+    emailList.innerHTML = '<p style="color:#718096;">该时间范围内没有邮件。</p>';
     return;
   }
 
@@ -352,67 +212,17 @@ function renderEmails(emails) {
   });
 }
 
-async function loadCachedDigest(listId, date) {
-  try {
-    const resp = await fetch(`/api/digest?list_id=${listId}&date=${date}`);
-    const data = await resp.json();
-    if (data.summary) {
-      renderDigest(data);
-    }
-  } catch (e) {
-    // No cached digest
-  }
-}
-
-async function generateDigest() {
-  const listId = listSelect.value;
-  const date = datePicker.value;
-  if (!listId || !date) return;
-
-  btnDigest.disabled = true;
-  btnDigest.innerHTML = '<span class="spinner"></span>Generating...';
-  hideStatus();
-
-  try {
-    const resp = await fetch(`/api/digest?list_id=${listId}&date=${date}`, { method: 'POST' });
-    const data = await resp.json();
-    if (data.error) {
-      showStatus(data.error, 'error');
-      return;
-    }
-    renderDigest(data);
-    showStatus('Digest generated successfully!', 'success');
-  } catch (e) {
-    showStatus('Failed to generate digest: ' + e.message, 'error');
-  } finally {
-    btnDigest.disabled = false;
-    btnDigest.textContent = 'Generate Digest';
-  }
-}
-
 function renderDigest(data) {
   digestSection.classList.remove('hidden');
   digestContent.innerHTML = renderMarkdown(data.summary);
   if (data.generated_at) {
-    digestContent.innerHTML += `<p style="color:#718096;font-size:0.85rem;margin-top:12px;">Generated: ${data.generated_at}</p>`;
+    const genTime = new Date(data.generated_at).toLocaleString('zh-CN');
+    digestContent.innerHTML += `<p style="color:#718096;font-size:0.85rem;margin-top:12px;">⏱️ 生成于 ${genTime}</p>`;
   }
 }
 
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
-
 // Event listeners
-btnLoad.addEventListener('click', loadEmails);
-btnDigest.addEventListener('click', generateDigest);
-btnDailySummary.addEventListener('click', () => generateDailySummary(true));
-btnDailySummaryRefresh.addEventListener('click', () => {
-  // Delete cache for current range and regenerate
-  fetch(`/api/daily-summary?days=${selectedDays}`, { method: 'DELETE' }).finally(() => generateDailySummary(true));
-});
+btnEmailRun.addEventListener('click', runCombinedFlow);
 
 // Init
 loadLists();
-loadCachedDailySummary();

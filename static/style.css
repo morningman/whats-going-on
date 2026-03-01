@@ -869,3 +869,92 @@ kbd {
   font-size: 0.85rem;
   font-weight: 600;
 }
+
+/* --- Progress Log Panel --- */
+.progress-log {
+  background: #1a202c;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  max-height: 220px;
+  overflow-y: auto;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.83rem;
+  line-height: 1.6;
+  border: 1px solid #2d3748;
+}
+
+.progress-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  transition: opacity 0.3s;
+}
+
+.progress-time {
+  color: #718096;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+
+.progress-icon {
+  flex-shrink: 0;
+}
+
+.progress-msg {
+  word-break: break-word;
+}
+
+/* Type-based colors */
+.progress-progress .progress-msg {
+  color: #90cdf4;
+}
+
+.progress-done .progress-msg {
+  color: #68d391;
+}
+
+.progress-error .progress-msg {
+  color: #fc8181;
+}
+
+.progress-retry .progress-msg {
+  color: #fbd38d;
+}
+
+/* Pulse animation for active items */
+.progress-active {
+  animation: progressPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes progressPulse {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* Scrollbar styling for progress log */
+.progress-log::-webkit-scrollbar {
+  width: 6px;
+}
+
+.progress-log::-webkit-scrollbar-track {
+  background: #2d3748;
+  border-radius: 3px;
+}
+
+.progress-log::-webkit-scrollbar-thumb {
+  background: #4a5568;
+  border-radius: 3px;
+}
+
+.progress-log::-webkit-scrollbar-thumb:hover {
+  background: #718096;
+}

@@ -8,7 +8,10 @@ import os
 import sys
 from datetime import datetime, timedelta
 
-from flask import Flask, jsonify, render_template, request
+import queue
+import threading
+
+from flask import Flask, Response, jsonify, render_template, request
 
 from fetchers import get_fetcher
 import asf_auth
@@ -197,10 +200,33 @@ def _restore_masked_tokens(new_config: dict) -> dict:
 
 
 def save_config(config: dict):
-    """Save config to config.json."""
+    """Save config to config.json.
+
+    Also syncs back to the source directory so that rebuilds preserve
+    settings changes made through the UI.
+    """
     with open(CONFIG_PATH, "w") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
     logger.info("Config saved to %s", CONFIG_PATH)
+
+    # Sync back to source directory if running from output/
+    _sync_config_to_source(config)
+
+
+def _sync_config_to_source(config: dict):
+    """If running from an output/ subdirectory, also save config to the
+    parent (source) directory so that rebuilds don't lose user changes."""
+    try:
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(app_dir)
+        # Check if we're in an output/ subdirectory
+        if os.path.basename(app_dir) == "output" and os.path.isdir(parent_dir):
+            source_config = os.path.join(parent_dir, "config.json")
+            with open(source_config, "w") as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+            logger.debug("Config synced back to source: %s", source_config)
+    except Exception as e:
+        logger.warning("Failed to sync config to source directory: %s", e)
 
 
 # --- Page routes ---
@@ -342,6 +368,140 @@ def api_digest():
     except Exception as e:
         logger.exception("POST /api/digest — error generating digest for %s on %s", list_id, date)
         return jsonify({"error": str(e)}), 500
+
+
+# --- Email SSE streaming endpoint ---
+
+
+@app.route("/api/email/digest/stream")
+def api_email_digest_stream():
+    """SSE endpoint: stream progress while fetching emails and generating digest."""
+    list_id = request.args.get("list_id", "")
+    try:
+        days = int(request.args.get("days", "3"))
+    except ValueError:
+        days = 3
+    if days not in (1, 3, 7):
+        days = 3
+    lang = request.args.get("lang", "zh")
+    if lang not in ("zh", "en"):
+        lang = "zh"
+
+    if not list_id:
+        def err_gen():
+            yield _sse_event({"type": "error", "message": "list_id is required"})
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    config = load_config()
+    ml = _find_list(config, list_id)
+    if not ml:
+        def err_gen():
+            yield _sse_event({"type": "error", "message": f"邮件组 '{list_id}' 未找到"})
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    # Check private list authentication
+    cookie = _get_cookie_for_list(config, ml)
+    if ml.get("private", False) and not cookie:
+        def err_gen():
+            yield _sse_event({
+                "type": "error",
+                "message": f"邮件组 '{ml['name']}' 是私有列表，需要 ASF 认证。请在设置页面登录。",
+            })
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    logger.info(
+        "SSE /api/email/digest/stream — list=%s (%s), days=%d",
+        list_id, ml["name"], days,
+    )
+
+    q = queue.Queue()
+
+    def progress_cb(event_type, message, **kwargs):
+        event = {"type": event_type, "message": message}
+        event.update(kwargs)
+        q.put(event)
+
+    def worker():
+        try:
+            # Build date list
+            dates = []
+            for i in range(days):
+                d = datetime.now() - timedelta(days=i)
+                dates.append(d.strftime("%Y-%m-%d"))
+            dates.sort()
+
+            fetcher = get_fetcher(ml["type"])
+            all_emails = []
+
+            for date_str in dates:
+                q.put({
+                    "type": "progress",
+                    "message": f"正在获取 {ml['name']} 在 {date_str} 的邮件...",
+                })
+                try:
+                    emails = fetcher.fetch_emails(ml["config"], date_str, cookie=cookie)
+                    all_emails.extend(emails)
+                    q.put({
+                        "type": "progress",
+                        "message": f"{date_str}: 获取到 {len(emails)} 封邮件",
+                    })
+                except Exception as e:
+                    logger.exception("Error fetching emails for %s on %s", ml["name"], date_str)
+                    q.put({
+                        "type": "retry",
+                        "message": f"{date_str}: 获取邮件失败 — {e}",
+                    })
+
+            # Emit emails_loaded so frontend can render them immediately
+            q.put({
+                "type": "emails_loaded",
+                "data": {
+                    "emails": all_emails,
+                    "count": len(all_emails),
+                },
+            })
+
+            if not all_emails:
+                q.put({
+                    "type": "done",
+                    "data": {
+                        "summary": "在所选时间范围内没有邮件。",
+                        "generated_at": "",
+                        "email_count": 0,
+                    },
+                })
+                return
+
+            # Generate digest with progress callbacks
+            cache_date = dates[-1]  # use latest date for cache key
+            llm_config = config.get("llm", {})
+            digest = summarizer.generate_digest(
+                all_emails, list_id, ml["name"], cache_date, llm_config,
+                progress_cb=progress_cb,
+                force=True,
+                lang=lang,
+            )
+            q.put({"type": "done", "data": digest})
+        except Exception as e:
+            logger.exception("SSE /api/email/digest/stream — error")
+            q.put({"type": "error", "message": str(e)})
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+
+    def generate():
+        while True:
+            try:
+                event = q.get(timeout=300)  # 5 min timeout for LLM calls
+            except queue.Empty:
+                yield _sse_event({"type": "error", "message": "操作超时 (5 分钟)"})
+                return
+            yield _sse_event(event)
+            if event["type"] in ("done", "error"):
+                return
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # --- Daily Summary API ---
@@ -679,6 +839,174 @@ def api_github_digest():
     except Exception as e:
         logger.exception("POST /api/github/digest — error")
         return jsonify({"error": str(e)}), 500
+
+
+# --- GitHub SSE streaming endpoints ---
+
+
+def _sse_event(data: dict) -> str:
+    """Format a dict as an SSE event line."""
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@app.route("/api/github/activity/stream")
+def api_github_activity_stream():
+    """SSE endpoint: stream progress while fetching GitHub activity."""
+    repo_id = request.args.get("repo_id", "")
+    try:
+        days = int(request.args.get("days", "3"))
+    except ValueError:
+        days = 3
+    if days not in (1, 3, 7):
+        days = 3
+
+    if not repo_id:
+        def err_gen():
+            yield _sse_event({"type": "error", "message": "repo_id is required"})
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    config = load_config()
+    gh_config = config.get("github", {})
+    repos = gh_config.get("repos", [])
+    repo = None
+    for r in repos:
+        if r["id"] == repo_id:
+            repo = r
+            break
+    if not repo:
+        def err_gen():
+            yield _sse_event({"type": "error", "message": f"Repo '{repo_id}' not found"})
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    logger.info("SSE /api/github/activity/stream — repo=%s/%s, days=%d", repo["owner"], repo["repo"], days)
+
+    q = queue.Queue()
+
+    def progress_cb(event_type, message, **kwargs):
+        event = {"type": event_type, "message": message}
+        event.update(kwargs)
+        q.put(event)
+
+    def worker():
+        try:
+            from sources.github import GitHubSource
+            gh = GitHubSource()
+            token = gh_config.get("token", "")
+            activity = gh.fetch_activity(
+                repo["owner"], repo["repo"], days=days, token=token,
+                progress_cb=progress_cb,
+            )
+            q.put({"type": "done", "data": activity})
+        except Exception as e:
+            logger.exception("SSE /api/github/activity/stream — error")
+            q.put({"type": "error", "message": str(e)})
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+
+    def generate():
+        while True:
+            try:
+                event = q.get(timeout=120)
+            except queue.Empty:
+                yield _sse_event({"type": "error", "message": "操作超时"})
+                return
+            yield _sse_event(event)
+            if event["type"] in ("done", "error"):
+                return
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/api/github/digest/stream")
+def api_github_digest_stream():
+    """SSE endpoint: stream progress while generating GitHub digest."""
+    repo_id = request.args.get("repo_id", "")
+    try:
+        days = int(request.args.get("days", "3"))
+    except ValueError:
+        days = 3
+    if days not in (1, 3, 7):
+        days = 3
+    lang = request.args.get("lang", "zh")
+    if lang not in ("zh", "en"):
+        lang = "zh"
+
+    if not repo_id:
+        def err_gen():
+            yield _sse_event({"type": "error", "message": "repo_id is required"})
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    config = load_config()
+    gh_config = config.get("github", {})
+    repos = gh_config.get("repos", [])
+    repo = None
+    for r in repos:
+        if r["id"] == repo_id:
+            repo = r
+            break
+    if not repo:
+        def err_gen():
+            yield _sse_event({"type": "error", "message": f"Repo '{repo_id}' not found"})
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    cache_key = f"github__{repo_id}__{today}__{days}d"
+
+    logger.info("SSE /api/github/digest/stream — repo=%s/%s, days=%d", repo["owner"], repo["repo"], days)
+
+    q = queue.Queue()
+
+    def progress_cb(event_type, message, **kwargs):
+        event = {"type": event_type, "message": message}
+        event.update(kwargs)
+        q.put(event)
+
+    def worker():
+        try:
+            # First fetch activity (with progress)
+            from sources.github import GitHubSource
+            gh = GitHubSource()
+            token = gh_config.get("token", "")
+            activity = gh.fetch_activity(
+                repo["owner"], repo["repo"], days=days, token=token,
+                progress_cb=progress_cb,
+            )
+
+            # Emit activity data so frontend can render it immediately
+            q.put({"type": "activity_loaded", "data": activity})
+
+            # Then generate digest (always fresh, no cache)
+            llm_config = config.get("llm", {})
+            digest = summarizer.generate_github_digest(
+                activity, repo_id, f"{repo['owner']}/{repo['repo']}",
+                days, llm_config, cache_key,
+                progress_cb=progress_cb,
+                force=True,
+                lang=lang,
+            )
+            q.put({"type": "done", "data": digest})
+        except Exception as e:
+            logger.exception("SSE /api/github/digest/stream — error")
+            q.put({"type": "error", "message": str(e)})
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+
+    def generate():
+        while True:
+            try:
+                event = q.get(timeout=300)  # 5 min timeout for LLM calls
+            except queue.Empty:
+                yield _sse_event({"type": "error", "message": "操作超时 (5 分钟)"})
+                return
+            yield _sse_event(event)
+            if event["type"] in ("done", "error"):
+                return
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # --- Slack API (stub — Coming Soon) ---

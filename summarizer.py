@@ -56,7 +56,7 @@ def _organize_threads(emails: list[dict]) -> list[dict]:
     return result
 
 
-def _build_prompt(emails: list[dict], list_name: str, date: str) -> str:
+def _build_prompt(emails: list[dict], list_name: str, date: str, lang: str = "zh") -> str:
     """Build the prompt for LLM API."""
     threads = _organize_threads(emails)
 
@@ -67,7 +67,8 @@ def _build_prompt(emails: list[dict], list_name: str, date: str) -> str:
             body = msg["body"][:2000]  # Truncate long bodies
             email_text += f"\nFrom: {msg['from']}\n{body}\n---\n"
 
-    return f"""You are an email digest assistant. Summarize the following mailing list emails from "{list_name}" on {date}.
+    if lang == "en":
+        return f"""You are an email digest assistant. Summarize the following mailing list emails from "{list_name}" on {date}.
 
 Provide a structured summary in Markdown format with:
 1. **Overview**: A 2-3 sentence high-level summary of the day's activity
@@ -75,12 +76,29 @@ Provide a structured summary in Markdown format with:
 3. **Action Items**: Any decisions made, patches submitted, or tasks assigned
 4. **Notable**: Anything particularly interesting or important
 
-Use the same language as the emails (if emails are in Chinese, summarize in Chinese; if in English, use English).
+**Please output in English.**
 Keep it concise but informative.
 
 ---
 
 Emails ({len(emails)} total, {len(threads)} threads):
+
+{email_text}"""
+    else:
+        return f"""You are an email digest assistant. Summarize the following mailing list emails from "{list_name}" on {date}.
+
+Provide a structured summary in Markdown format with:
+1. **概览**: 用 2-3 句话概括当天邮件的整体活动情况
+2. **主要讨论**: 列出讨论的主要话题，对每个主题进行简要总结
+3. **行动项**: 任何已做出的决定、提交的补丁或分配的任务
+4. **值得关注**: 任何特别有趣或重要的内容
+
+**请务必使用中文输出。**
+保持简洁但信息丰富。
+
+---
+
+邮件 (共 {len(emails)} 封, {len(threads)} 个主题):
 
 {email_text}"""
 
@@ -242,29 +260,67 @@ def generate_digest(
     list_name: str,
     date: str,
     llm_config: dict,
+    progress_cb=None,
+    force: bool = False,
+    lang: str = "zh",
 ) -> dict:
     """Generate an AI digest for the given emails.
 
     Args:
         llm_config: The full 'llm' section from config, containing
                     'active_provider' and 'providers' list.
+        progress_cb: Optional callback(event_type, message, **kwargs) for progress events.
+        force: If True, skip cache and regenerate.
 
     Returns {"summary": str, "generated_at": str, "email_count": int}
     """
-    # Check cache first
-    cached = load_digest(list_id, date)
-    if cached:
-        logger.info("Returning cached digest for list=%s, date=%s", list_id, date)
-        return cached
+    # Check cache first (skip when force=True)
+    if not force:
+        if progress_cb:
+            progress_cb("progress", "正在检查缓存...", step="cache_check")
+        cached = load_digest(list_id, date)
+        if cached:
+            logger.info("Returning cached digest for list=%s, date=%s", list_id, date)
+            if progress_cb:
+                progress_cb("progress", "找到缓存的摘要，直接返回", step="cache_hit")
+            return cached
+    else:
+        logger.info("Force regenerating digest for list=%s, date=%s (skipping cache)", list_id, date)
 
     if not emails:
         logger.info("No emails found for list=%s, date=%s", list_id, date)
+        if progress_cb:
+            progress_cb("progress", "没有找到邮件", step="no_emails")
         return {"summary": "No emails found for this date.", "generated_at": "", "email_count": 0}
 
     logger.info("Generating digest for list=%s (%s), date=%s, emails=%d", list_id, list_name, date, len(emails))
+
+    if progress_cb:
+        progress_cb("progress", "正在获取 LLM 配置...", step="llm_config")
     provider = _get_active_provider(llm_config)
-    prompt = _build_prompt(emails, list_name, date)
-    summary_text = _call_llm(prompt, provider)
+
+    if progress_cb:
+        progress_cb("progress", f"正在构建提示词 ({len(emails)} 封邮件)...", step="build_prompt")
+    prompt = _build_prompt(emails, list_name, date, lang=lang)
+
+    if progress_cb:
+        provider_name = provider.get("name", provider.get("id", "unknown"))
+        model = provider.get("model", "unknown")
+        progress_cb(
+            "progress",
+            f"正在调用 LLM ({provider_name} / {model})，请耐心等待...",
+            step="llm_call",
+        )
+
+    try:
+        summary_text = _call_llm(prompt, provider)
+    except Exception as e:
+        if progress_cb:
+            progress_cb("error", f"LLM 调用失败: {e}")
+        raise
+
+    if progress_cb:
+        progress_cb("progress", "摘要生成完成，正在保存...", step="saving")
 
     digest = {
         "summary": summary_text,
@@ -503,7 +559,7 @@ def generate_daily_summary(
 # --- GitHub Digest ---
 
 
-def _build_github_prompt(activity: dict, repo_name: str, days: int) -> str:
+def _build_github_prompt(activity: dict, repo_name: str, days: int, lang: str = "zh") -> str:
     """Build the prompt for GitHub activity summary."""
     prs = activity.get("pulls", [])
     issues = activity.get("issues", [])
@@ -513,32 +569,53 @@ def _build_github_prompt(activity: dict, repo_name: str, days: int) -> str:
 
     # PR section
     if prs:
-        sections += f"\n## Pull Requests ({len(prs)} 个)\n"
+        sections += f"\n## Pull Requests ({len(prs)})\n"
         for pr in prs:
-            state = "已合并" if pr.get("merged") else ("开放中" if pr["state"] == "open" else "已关闭")
+            state = "Merged" if pr.get("merged") else ("Open" if pr["state"] == "open" else "Closed")
             draft = " [Draft]" if pr.get("draft") else ""
             labels = ", ".join(pr.get("labels", [])) if pr.get("labels") else ""
-            label_text = f" 标签: {labels}" if labels else ""
+            label_text = f" Labels: {labels}" if labels else ""
             url = pr.get("html_url", "")
             sections += f"\n- #{pr['number']} {pr['title']}{draft}\n"
-            sections += f"  链接: {url}\n"
-            sections += f"  作者: {pr['user']} | 状态: {state}{label_text}\n"
-            sections += f"  创建: {pr.get('created_at', '')[:10]} | 更新: {pr.get('updated_at', '')[:10]}\n"
+            sections += f"  URL: {url}\n"
+            sections += f"  Author: {pr['user']} | Status: {state}{label_text}\n"
+            sections += f"  Created: {pr.get('created_at', '')[:10]} | Updated: {pr.get('updated_at', '')[:10]}\n"
 
     # Issue section
     if issues:
-        sections += f"\n## Issues ({len(issues)} 个)\n"
+        sections += f"\n## Issues ({len(issues)})\n"
         for issue in issues:
-            state = "开放中" if issue["state"] == "open" else "已关闭"
+            state = "Open" if issue["state"] == "open" else "Closed"
             labels = ", ".join(issue.get("labels", [])) if issue.get("labels") else ""
-            label_text = f" 标签: {labels}" if labels else ""
+            label_text = f" Labels: {labels}" if labels else ""
             url = issue.get("html_url", "")
             sections += f"\n- #{issue['number']} {issue['title']}\n"
-            sections += f"  链接: {url}\n"
-            sections += f"  作者: {issue['user']} | 状态: {state} | {issue.get('comments', 0)} 条评论{label_text}\n"
-            sections += f"  创建: {issue.get('created_at', '')[:10]} | 更新: {issue.get('updated_at', '')[:10]}\n"
+            sections += f"  URL: {url}\n"
+            sections += f"  Author: {issue['user']} | Status: {state} | {issue.get('comments', 0)} comments{label_text}\n"
+            sections += f"  Created: {issue.get('created_at', '')[:10]} | Updated: {issue.get('updated_at', '')[:10]}\n"
 
-    return f"""你是一个 GitHub 项目活动分析助手。请对以下仓库 "{repo_name}" 最近 {days} 天的 PR 和 Issue 活动进行分析和总结。
+    if lang == "en":
+        return f"""You are a GitHub project activity analyst. Analyze and summarize the following PR and Issue activity for the repository "{repo_name}" over the last {days} days.
+
+**Please output in English.**
+
+Provide a structured Markdown summary containing:
+
+1. **Overview**: 2-3 sentences summarizing the repository's recent activity
+2. **Key PRs**: List the most important Pull Requests (merged first), briefly explaining their content and significance. Each PR must include a clickable link in the format [#number](URL)
+3. **Active Issues**: List noteworthy Issues, especially those with many comments or important labels. Each Issue must include a clickable link in the format [#number](URL)
+4. **Trend Analysis**: Brief analysis of project activity, focus areas, etc.
+
+Note: When mentioning PRs or Issues, always use Markdown link format [#number](URL) to make them clickable to the GitHub page.
+
+Statistics:
+- Total PRs: {stats.get('total_prs', 0)} (Merged: {stats.get('merged_prs', 0)}, Open: {stats.get('open_prs', 0)}, Closed: {stats.get('closed_prs', 0)})
+- Total Issues: {stats.get('total_issues', 0)} (Open: {stats.get('open_issues', 0)}, Closed: {stats.get('closed_issues', 0)})
+
+---
+{sections}"""
+    else:
+        return f"""你是一个 GitHub 项目活动分析助手。请对以下仓库 "{repo_name}" 最近 {days} 天的 PR 和 Issue 活动进行分析和总结。
 
 **请使用中文输出。**
 
@@ -566,21 +643,33 @@ def generate_github_digest(
     days: int,
     llm_config: dict,
     cache_key: str,
+    progress_cb=None,
+    force: bool = False,
+    lang: str = "zh",
 ) -> dict:
     """Generate an AI digest for GitHub activity.
 
     Returns {"summary": str, "generated_at": str, "stats": dict}
     """
-    # Check cache
-    cached = load_digest(cache_key, "")
-    if cached:
-        logger.info("Returning cached GitHub digest for %s", cache_key)
-        return cached
+    # Check cache (skip when force=True)
+    if not force:
+        if progress_cb:
+            progress_cb("progress", "正在检查缓存...", step="cache_check")
+        cached = load_digest(cache_key, "")
+        if cached:
+            logger.info("Returning cached GitHub digest for %s", cache_key)
+            if progress_cb:
+                progress_cb("progress", "找到缓存的摘要，直接返回", step="cache_hit")
+            return cached
+    else:
+        logger.info("Force regenerating GitHub digest for %s (skipping cache)", cache_key)
 
     prs = activity.get("pulls", [])
     issues = activity.get("issues", [])
     if not prs and not issues:
         logger.info("No GitHub activity for %s (%s)", repo_id, repo_name)
+        if progress_cb:
+            progress_cb("progress", "没有找到 PR 或 Issue 活动", step="no_activity")
         return {
             "summary": "在所选时间范围内没有 PR 或 Issue 活动。",
             "generated_at": "",
@@ -589,9 +678,37 @@ def generate_github_digest(
 
     logger.info("Generating GitHub digest for %s (%s), days=%d, prs=%d, issues=%d",
                 repo_id, repo_name, days, len(prs), len(issues))
+
+    if progress_cb:
+        progress_cb("progress", "正在获取 LLM 配置...", step="llm_config")
     provider = _get_active_provider(llm_config)
-    prompt = _build_github_prompt(activity, repo_name, days)
-    summary_text = _call_llm(prompt, provider)
+
+    if progress_cb:
+        progress_cb(
+            "progress",
+            f"正在构建提示词 ({len(prs)} 个 PR, {len(issues)} 个 Issue)...",
+            step="build_prompt",
+        )
+    prompt = _build_github_prompt(activity, repo_name, days, lang=lang)
+
+    if progress_cb:
+        provider_name = provider.get("name", provider.get("id", "unknown"))
+        model = provider.get("model", "unknown")
+        progress_cb(
+            "progress",
+            f"正在调用 LLM ({provider_name} / {model})，请耐心等待...",
+            step="llm_call",
+        )
+
+    try:
+        summary_text = _call_llm(prompt, provider)
+    except Exception as e:
+        if progress_cb:
+            progress_cb("error", f"LLM 调用失败: {e}")
+        raise
+
+    if progress_cb:
+        progress_cb("progress", "摘要生成完成，正在保存...", step="saving")
 
     digest = {
         "summary": summary_text,

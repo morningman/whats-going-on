@@ -483,6 +483,8 @@ document.getElementById('btn-save').addEventListener('click', async () => {
     const result = await resp.json();
     if (result.ok) {
       showStatus('Settings saved!', 'success');
+      // Reload config from backend to reflect actual stored state
+      await loadConfig();
     } else {
       showStatus('Failed to save: ' + (result.error || 'Unknown error'), 'error');
     }

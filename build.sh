@@ -39,6 +39,11 @@ echo "✅ Python: $($PYTHON --version)"
 echo ""
 echo "📁 准备 output 目录..."
 if [ -d "$OUTPUT_DIR" ]; then
+    echo "   保存用户数据..."
+    # Preserve user config and data across rebuilds
+    TEMP_BACKUP=$(mktemp -d)
+    [ -f "$OUTPUT_DIR/config.json" ] && cp "$OUTPUT_DIR/config.json" "$TEMP_BACKUP/config.json"
+    [ -d "$OUTPUT_DIR/data" ] && cp -r "$OUTPUT_DIR/data" "$TEMP_BACKUP/data"
     echo "   清理旧的 output 目录..."
     rm -rf "$OUTPUT_DIR"
 fi
@@ -96,6 +101,19 @@ fi
 mkdir -p "$OUTPUT_DIR/data/emails"
 mkdir -p "$OUTPUT_DIR/data/digests"
 mkdir -p "$OUTPUT_DIR/log"
+
+# 恢复之前备份的用户数据（优先使用运行时保存的配置）
+if [ -n "${TEMP_BACKUP:-}" ] && [ -d "$TEMP_BACKUP" ]; then
+    if [ -f "$TEMP_BACKUP/config.json" ]; then
+        echo "   恢复运行时用户配置..."
+        cp "$TEMP_BACKUP/config.json" "$OUTPUT_DIR/config.json"
+    fi
+    if [ -d "$TEMP_BACKUP/data" ]; then
+        echo "   恢复缓存数据..."
+        cp -r "$TEMP_BACKUP/data/"* "$OUTPUT_DIR/data/" 2>/dev/null || true
+    fi
+    rm -rf "$TEMP_BACKUP"
+fi
 
 echo "   ✅ 文件复制完成"
 

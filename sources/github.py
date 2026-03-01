@@ -1,6 +1,7 @@
 """GitHub data source — fetches PR and Issue activity from public repos via REST API."""
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -22,14 +23,41 @@ class GitHubSource:
             h["Authorization"] = f"Bearer {token}"
         return h
 
+    def _request_with_retry(
+        self, url: str, params: dict, headers: dict,
+        max_retries: int = 3, progress_cb=None,
+    ) -> requests.Response:
+        """Make a GET request with retry logic and progress reporting."""
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = requests.get(url, headers=headers, params=params, timeout=30)
+                resp.raise_for_status()
+                return resp
+            except requests.RequestException as e:
+                if attempt < max_retries:
+                    wait = 2 ** attempt  # exponential backoff: 2, 4, 8s
+                    msg = f"请求失败 ({e})，{wait}s 后重试 ({attempt}/{max_retries})..."
+                    logger.warning(msg)
+                    if progress_cb:
+                        progress_cb("retry", msg, attempt=attempt, max_attempts=max_retries)
+                    time.sleep(wait)
+                else:
+                    if progress_cb:
+                        progress_cb("error", f"请求失败，已重试 {max_retries} 次: {e}")
+                    raise
+
     def fetch_pull_requests(
-        self, owner: str, repo: str, days: int = 3, token: str = ""
+        self, owner: str, repo: str, days: int = 3, token: str = "",
+        progress_cb=None,
     ) -> list[dict]:
         """Fetch PRs updated within the last N days."""
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         url = f"{API_BASE}/repos/{owner}/{repo}/pulls"
         all_prs = []
         page = 1
+
+        if progress_cb:
+            progress_cb("progress", f"正在获取 {owner}/{repo} 的 Pull Requests...", step="fetch_prs")
 
         while True:
             params = {
@@ -40,8 +68,17 @@ class GitHubSource:
                 "page": page,
             }
             logger.info("Fetching PRs from %s/%s page=%d", owner, repo, page)
-            resp = requests.get(url, headers=self._headers(token), params=params, timeout=30)
-            resp.raise_for_status()
+            if progress_cb:
+                progress_cb(
+                    "progress",
+                    f"正在获取 PR 数据 (第 {page} 页)...",
+                    step="fetch_prs",
+                    detail=f"已获取 {len(all_prs)} 条 PR",
+                )
+
+            resp = self._request_with_retry(
+                url, params, self._headers(token), progress_cb=progress_cb,
+            )
             prs = resp.json()
 
             if not prs:
@@ -52,7 +89,10 @@ class GitHubSource:
                 if updated < since:
                     # PRs are sorted by updated desc, so we can stop
                     filtered = [p for p in prs if p.get("updated_at", "") >= since]
-                    return self._normalize_prs(all_prs + filtered)
+                    result = self._normalize_prs(all_prs + filtered)
+                    if progress_cb:
+                        progress_cb("progress", f"PR 数据获取完成，共 {len(result)} 条", step="fetch_prs_done")
+                    return result
 
                 all_prs.append(pr)
 
@@ -60,7 +100,10 @@ class GitHubSource:
                 break
             page += 1
 
-        return self._normalize_prs(all_prs)
+        result = self._normalize_prs(all_prs)
+        if progress_cb:
+            progress_cb("progress", f"PR 数据获取完成，共 {len(result)} 条", step="fetch_prs_done")
+        return result
 
     def _normalize_prs(self, raw_prs: list[dict]) -> list[dict]:
         """Normalize raw GitHub PR data to a simpler format."""
@@ -81,13 +124,17 @@ class GitHubSource:
         return result
 
     def fetch_issues(
-        self, owner: str, repo: str, days: int = 3, token: str = ""
+        self, owner: str, repo: str, days: int = 3, token: str = "",
+        progress_cb=None,
     ) -> list[dict]:
         """Fetch issues (excluding PRs) updated within the last N days."""
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         url = f"{API_BASE}/repos/{owner}/{repo}/issues"
         all_issues = []
         page = 1
+
+        if progress_cb:
+            progress_cb("progress", f"正在获取 Issue 数据...", step="fetch_issues")
 
         while True:
             params = {
@@ -99,8 +146,17 @@ class GitHubSource:
                 "page": page,
             }
             logger.info("Fetching issues from %s/%s page=%d", owner, repo, page)
-            resp = requests.get(url, headers=self._headers(token), params=params, timeout=30)
-            resp.raise_for_status()
+            if progress_cb:
+                progress_cb(
+                    "progress",
+                    f"正在获取 Issue 数据 (第 {page} 页)...",
+                    step="fetch_issues",
+                    detail=f"已获取 {len(all_issues)} 条 Issue",
+                )
+
+            resp = self._request_with_retry(
+                url, params, self._headers(token), progress_cb=progress_cb,
+            )
             issues = resp.json()
 
             if not issues:
@@ -114,7 +170,10 @@ class GitHubSource:
                 break
             page += 1
 
-        return self._normalize_issues(all_issues)
+        result = self._normalize_issues(all_issues)
+        if progress_cb:
+            progress_cb("progress", f"Issue 数据获取完成，共 {len(result)} 条", step="fetch_issues_done")
+        return result
 
     def _normalize_issues(self, raw_issues: list[dict]) -> list[dict]:
         """Normalize raw GitHub issue data to a simpler format."""
@@ -134,12 +193,16 @@ class GitHubSource:
         return result
 
     def fetch_activity(
-        self, owner: str, repo: str, days: int = 3, token: str = ""
+        self, owner: str, repo: str, days: int = 3, token: str = "",
+        progress_cb=None,
     ) -> dict:
         """Fetch combined PR + Issue activity for a repo."""
         logger.info("Fetching activity for %s/%s (last %d days)", owner, repo, days)
-        prs = self.fetch_pull_requests(owner, repo, days, token)
-        issues = self.fetch_issues(owner, repo, days, token)
+        if progress_cb:
+            progress_cb("progress", f"开始获取 {owner}/{repo} 最近 {days} 天的活动数据...", step="start")
+
+        prs = self.fetch_pull_requests(owner, repo, days, token, progress_cb=progress_cb)
+        issues = self.fetch_issues(owner, repo, days, token, progress_cb=progress_cb)
 
         stats = {
             "total_prs": len(prs),
@@ -155,6 +218,13 @@ class GitHubSource:
             "Activity for %s/%s: %d PRs (%d merged), %d issues",
             owner, repo, stats["total_prs"], stats["merged_prs"], stats["total_issues"],
         )
+
+        if progress_cb:
+            progress_cb(
+                "progress",
+                f"数据获取完成：{stats['total_prs']} 个 PR ({stats['merged_prs']} 已合并)，{stats['total_issues']} 个 Issue",
+                step="complete",
+            )
 
         return {
             "pulls": prs,

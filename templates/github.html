@@ -16,11 +16,15 @@
         <button class="ds-range-btn active" data-days="3">最近 3 天</button>
         <button class="ds-range-btn" data-days="7">最近 7 天</button>
     </div>
-    <button class="btn btn-primary" id="btn-gh-load">加载活动</button>
-    <button class="btn btn-daily-summary" id="btn-gh-digest" disabled>生成摘要</button>
+    <div class="ds-range-selector" id="gh-lang-selector">
+        <button class="ds-range-btn active" data-lang="zh">中文</button>
+        <button class="ds-range-btn" data-lang="en">English</button>
+    </div>
+    <button class="btn btn-daily-summary" id="btn-gh-run">加载并生成摘要</button>
 </div>
 
 <div id="gh-status" class="status hidden"></div>
+<div id="gh-progress-log" class="progress-log hidden"></div>
 
 <div id="gh-digest-section" class="card hidden">
     <h2>📊 仓库活动摘要</h2>
