@@ -468,6 +468,22 @@ async function loadConfig() {
   }
 }
 
+// --- Inline save status (shown above the Save button) ---
+const saveStatusEl = document.getElementById('save-status');
+let _saveStatusTimer = null;
+
+function showSaveStatus(msg, type) {
+  if (_saveStatusTimer) clearTimeout(_saveStatusTimer);
+  saveStatusEl.textContent = msg;
+  saveStatusEl.className = `status status-${type}`;
+  saveStatusEl.classList.remove('hidden');
+  // Auto-hide after 4 seconds
+  _saveStatusTimer = setTimeout(() => {
+    saveStatusEl.classList.add('hidden');
+    _saveStatusTimer = null;
+  }, 4000);
+}
+
 // Save all settings
 document.getElementById('btn-save').addEventListener('click', async () => {
   // Update GitHub token from input
@@ -482,14 +498,14 @@ document.getElementById('btn-save').addEventListener('click', async () => {
     });
     const result = await resp.json();
     if (result.ok) {
-      showStatus('Settings saved!', 'success');
+      showSaveStatus('✅ Settings saved!', 'success');
       // Reload config from backend to reflect actual stored state
       await loadConfig();
     } else {
-      showStatus('Failed to save: ' + (result.error || 'Unknown error'), 'error');
+      showSaveStatus('❌ Failed to save: ' + (result.error || 'Unknown error'), 'error');
     }
   } catch (e) {
-    showStatus('Failed to save settings: ' + e.message, 'error');
+    showSaveStatus('❌ Failed to save settings: ' + e.message, 'error');
   }
 });
 

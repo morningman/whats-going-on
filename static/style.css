@@ -126,27 +126,151 @@ header nav a.active {
   color: #2d3748;
 }
 
-/* Digest area */
+/* Digest area — styled for marked.js rendered Markdown */
 .digest-content {
   line-height: 1.8;
-  white-space: pre-wrap;
 }
 
 .digest-content h1,
 .digest-content h2,
-.digest-content h3 {
+.digest-content h3,
+.digest-content h4 {
   margin-top: 16px;
   margin-bottom: 8px;
+  color: #1a202c;
+  font-weight: 600;
+}
+
+.digest-content h1 {
+  font-size: 1.4rem;
+}
+
+.digest-content h2 {
+  font-size: 1.2rem;
+}
+
+.digest-content h3 {
+  font-size: 1.05rem;
+}
+
+.digest-content h4 {
+  font-size: 0.95rem;
+}
+
+.digest-content p {
+  margin-bottom: 10px;
 }
 
 .digest-content ul,
 .digest-content ol {
   padding-left: 24px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+}
+
+.digest-content li {
+  margin-bottom: 4px;
 }
 
 .digest-content strong {
   color: #2d3748;
+}
+
+.digest-content a {
+  color: #2b6cb0;
+  text-decoration: none;
+}
+
+.digest-content a:hover {
+  text-decoration: underline;
+  color: #1a4d8f;
+}
+
+/* Tables */
+.digest-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 0.9rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.digest-content thead th {
+  background: #f7fafc;
+  color: #2d3748;
+  font-weight: 600;
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 2px solid #e2e8f0;
+}
+
+.digest-content tbody td {
+  padding: 9px 14px;
+  border-bottom: 1px solid #edf2f7;
+  color: #4a5568;
+  vertical-align: top;
+}
+
+.digest-content tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.digest-content tbody tr:nth-child(even) {
+  background: #f7fafc;
+}
+
+.digest-content tbody tr:hover {
+  background: #edf2f7;
+}
+
+/* Code blocks */
+.digest-content pre {
+  background: #1a202c;
+  color: #e2e8f0;
+  padding: 14px 16px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 12px 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.digest-content pre code {
+  background: none;
+  color: inherit;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+.digest-content code {
+  background: #edf2f7;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.88em;
+  color: #c53030;
+}
+
+/* Blockquotes */
+.digest-content blockquote {
+  border-left: 3px solid #3182ce;
+  margin: 12px 0;
+  padding: 8px 16px;
+  background: #f7fafc;
+  color: #4a5568;
+  border-radius: 0 6px 6px 0;
+}
+
+.digest-content blockquote p {
+  margin-bottom: 0;
+}
+
+/* Horizontal rules */
+.digest-content hr {
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  margin: 16px 0;
 }
 
 /* Email list */

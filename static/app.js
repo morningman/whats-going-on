@@ -62,20 +62,20 @@ function hideEmailStatus() {
   emailStatus.classList.add('hidden');
 }
 
-// --- Markdown rendering helper ---
+// --- Markdown rendering helper (powered by marked.js) ---
 
 function renderMarkdown(text) {
-  let html = escapeHtml(text || '');
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-  html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
-  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
-  html = html.replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>');
-  html = html.replace(/\n\n/g, '</p><p>');
-  return '<p>' + html + '</p>';
+  if (typeof marked !== 'undefined') {
+    const renderer = new marked.Renderer();
+    const originalLinkRenderer = renderer.link.bind(renderer);
+    renderer.link = function (href, title, text) {
+      const html = originalLinkRenderer(href, title, text);
+      return html.replace('<a ', '<a target="_blank" rel="noopener noreferrer" ');
+    };
+    return marked.parse(text || '', { renderer: renderer, breaks: true, gfm: true });
+  }
+  // fallback
+  return '<p>' + escapeHtml(text || '') + '</p>';
 }
 
 function escapeHtml(str) {

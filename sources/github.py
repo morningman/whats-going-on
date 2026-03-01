@@ -46,24 +46,44 @@ class GitHubSource:
                         progress_cb("error", f"请求失败，已重试 {max_retries} 次: {e}")
                     raise
 
+    def _get_default_branch(
+        self, owner: str, repo: str, token: str = "",
+        progress_cb=None,
+    ) -> str:
+        """Get the default branch name of a repo (e.g. 'main' or 'master')."""
+        url = f"{API_BASE}/repos/{owner}/{repo}"
+        logger.info("Fetching default branch for %s/%s", owner, repo)
+        if progress_cb:
+            progress_cb("progress", f"正在获取 {owner}/{repo} 的默认分支...", step="fetch_default_branch")
+        resp = self._request_with_retry(url, {}, self._headers(token), progress_cb=progress_cb)
+        default_branch = resp.json().get("default_branch", "main")
+        logger.info("Default branch for %s/%s is '%s'", owner, repo, default_branch)
+        if progress_cb:
+            progress_cb("progress", f"默认分支：{default_branch}", step="fetch_default_branch_done")
+        return default_branch
+
     def fetch_pull_requests(
         self, owner: str, repo: str, days: int = 3, token: str = "",
         progress_cb=None,
     ) -> list[dict]:
-        """Fetch PRs updated within the last N days."""
+        """Fetch PRs updated within the last N days, targeting the default branch only."""
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         url = f"{API_BASE}/repos/{owner}/{repo}/pulls"
         all_prs = []
         page = 1
 
+        # Only fetch PRs targeting the default branch
+        default_branch = self._get_default_branch(owner, repo, token, progress_cb)
+
         if progress_cb:
-            progress_cb("progress", f"正在获取 {owner}/{repo} 的 Pull Requests...", step="fetch_prs")
+            progress_cb("progress", f"正在获取 {owner}/{repo} 提交到 {default_branch} 分支的 Pull Requests...", step="fetch_prs")
 
         while True:
             params = {
                 "state": "all",
                 "sort": "updated",
                 "direction": "desc",
+                "base": default_branch,
                 "per_page": 100,
                 "page": page,
             }
