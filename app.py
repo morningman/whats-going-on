@@ -5,12 +5,14 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import sys
 from datetime import datetime, timedelta
 
 import queue
 import threading
 
+import requests as http_requests
 from flask import Flask, Response, jsonify, render_template, request
 
 from fetchers import get_fetcher
@@ -148,6 +150,12 @@ def _mask_tokens(config: dict) -> dict:
         safe["slack"]["user_token"] = slack_token[:8] + "..." + slack_token[-4:]
     elif slack_token:
         safe.setdefault("slack", {})["user_token"] = "***"
+    # Mask Feishu webhook URL (contains secret token)
+    feishu_url = safe.get("feishu", {}).get("webhook_url", "")
+    if feishu_url and len(feishu_url) > 20:
+        safe.setdefault("feishu", {})["webhook_url"] = feishu_url[:40] + "..." + feishu_url[-6:]
+    elif feishu_url:
+        safe.setdefault("feishu", {})["webhook_url"] = "***"
     return safe
 
 
@@ -196,6 +204,13 @@ def _restore_masked_tokens(new_config: dict) -> dict:
     slack_token = new_slack.get("user_token", "")
     if slack_token and ("..." in slack_token or slack_token == "***"):
         new_slack["user_token"] = old_slack.get("user_token", "")
+
+    # Restore masked Feishu webhook URL
+    old_feishu = old_config.get("feishu", {})
+    new_feishu = new_config.get("feishu", {})
+    feishu_url = new_feishu.get("webhook_url", "")
+    if feishu_url and ("..." in feishu_url or feishu_url == "***"):
+        new_feishu["webhook_url"] = old_feishu.get("webhook_url", "")
 
     return new_config
 
@@ -500,11 +515,13 @@ def api_email_digest_stream():
             # Generate digest with progress callbacks
             cache_date = dates[-1]  # use latest date for cache key
             llm_config = config.get("llm", {})
+            digest_date_range = f"{dates[0]} ~ {dates[-1]}" if len(dates) > 1 else dates[0]
             digest = summarizer.generate_digest(
                 all_emails, list_id, ml["name"], cache_date, llm_config,
                 progress_cb=progress_cb,
                 force=True,
                 lang=lang,
+                date_range=digest_date_range,
             )
             q.put({"type": "done", "data": digest})
         except Exception as e:
@@ -1034,12 +1051,21 @@ def api_github_digest_stream():
 
             # Then generate digest (always fresh, no cache)
             llm_config = config.get("llm", {})
+            # Compute date range label for LLM prompt
+            if start_date and end_date:
+                digest_date_range = f"{start_date} ~ {end_date}"
+            else:
+                from datetime import timedelta as _td
+                _end = datetime.now()
+                _start = _end - _td(days=days - 1)
+                digest_date_range = f"{_start.strftime('%Y-%m-%d')} ~ {_end.strftime('%Y-%m-%d')}"
             digest = summarizer.generate_github_digest(
                 activity, repo_id, f"{repo['owner']}/{repo['repo']}",
                 days, llm_config, cache_key,
                 progress_cb=progress_cb,
                 force=True,
                 lang=lang,
+                date_range=digest_date_range,
             )
             q.put({"type": "done", "data": digest})
         except Exception as e:
@@ -1085,6 +1111,96 @@ def api_summary_file(filename):
     if content is None:
         return jsonify({"error": "File not found"}), 404
     return jsonify({"filename": filename, "content": content})
+
+
+# --- Feishu Webhook Push API ---
+
+
+def _markdown_to_feishu_post(md_text: str, title: str = ""):
+    """Convert markdown text to Feishu rich-text (post) message format.
+
+    Splits the markdown by lines and creates text/link elements.
+    """
+    lines = md_text.strip().split("\n")
+    content_lines = []
+    for line in lines:
+        elements = []
+        # Convert markdown links [text](url) → link elements
+        parts = re.split(r'\[([^\]]+)\]\(([^)]+)\)', line)
+        for i, part in enumerate(parts):
+            if i % 3 == 0:  # plain text
+                cleaned = part.strip()
+                if cleaned:
+                    # Clean up markdown formatting characters
+                    cleaned = re.sub(r'^#{1,6}\s*', '', cleaned)  # headers
+                    cleaned = re.sub(r'\*\*(.+?)\*\*', r'\1', cleaned)  # bold
+                    cleaned = re.sub(r'\*(.+?)\*', r'\1', cleaned)  # italic
+                    cleaned = re.sub(r'`(.+?)`', r'\1', cleaned)  # inline code
+                    if cleaned:
+                        elements.append({"tag": "text", "text": cleaned})
+            elif i % 3 == 1:  # link text (next part is url)
+                url = parts[i + 1] if i + 1 < len(parts) else ""
+                elements.append({"tag": "a", "text": part, "href": url})
+            # i % 3 == 2 is the url, already consumed above
+        if elements:
+            content_lines.append(elements)
+        elif line.strip() == "":
+            # Preserve blank lines as empty text
+            content_lines.append([{"tag": "text", "text": ""}])
+
+    return {
+        "msg_type": "post",
+        "content": {
+            "post": {
+                "zh_cn": {
+                    "title": "",
+                    "content": content_lines,
+                }
+            }
+        },
+    }
+
+
+@app.route("/api/feishu/push", methods=["POST"])
+def api_feishu_push():
+    """Push AI summary content to a Feishu group chat via webhook."""
+    config = load_config()
+    webhook_url = config.get("feishu", {}).get("webhook_url", "")
+    if not webhook_url:
+        logger.warning("POST /api/feishu/push — no webhook URL configured")
+        return jsonify({"ok": False, "message": "飞书 Webhook URL 未配置。请在设置页面填写。"}), 400
+
+    data = request.get_json()
+    if not data or not data.get("content"):
+        logger.warning("POST /api/feishu/push — missing content")
+        return jsonify({"ok": False, "message": "推送内容不能为空"}), 400
+
+    content = data["content"]
+    title = data.get("title", "AI 摘要推送")
+    logger.info("POST /api/feishu/push — pushing to Feishu, title=%s, content_len=%d", title, len(content))
+
+    try:
+        payload = _markdown_to_feishu_post(content, title)
+        resp = http_requests.post(
+            webhook_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
+        result = resp.json()
+        if result.get("code") == 0 or result.get("StatusCode") == 0:
+            logger.info("POST /api/feishu/push — success")
+            return jsonify({"ok": True, "message": "推送成功！摘要已发送到飞书群。"})
+        else:
+            msg = result.get("msg") or result.get("StatusMessage") or str(result)
+            logger.warning("POST /api/feishu/push — Feishu returned error: %s", msg)
+            return jsonify({"ok": False, "message": f"飞书返回错误: {msg}"})
+    except http_requests.exceptions.Timeout:
+        logger.error("POST /api/feishu/push — request timeout")
+        return jsonify({"ok": False, "message": "请求飞书超时，请检查网络连接"})
+    except Exception as e:
+        logger.exception("POST /api/feishu/push — error")
+        return jsonify({"ok": False, "message": f"推送失败: {str(e)}"})
 
 
 # --- Slack API (stub — Coming Soon) ---

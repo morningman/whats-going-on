@@ -415,6 +415,51 @@ header nav a.active {
   font-size: 0.85rem;
 }
 
+/* Feishu push button */
+.btn-feishu {
+  background: linear-gradient(135deg, #3370ff 0%, #2b5ce6 100%);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 6px rgba(51, 112, 255, 0.25);
+  white-space: nowrap;
+}
+
+.btn-feishu:hover {
+  background: linear-gradient(135deg, #2b5ce6 0%, #1e4fd1 100%);
+  box-shadow: 0 3px 10px rgba(51, 112, 255, 0.35);
+  transform: translateY(-1px);
+}
+
+.btn-feishu:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Digest header — flex row for title + push button */
+.digest-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.digest-header h2 {
+  margin-bottom: 0;
+}
+
+/* History actions — flex row for back + push buttons */
+.history-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 /* Status messages */
 .status {
   padding: 10px 14px;

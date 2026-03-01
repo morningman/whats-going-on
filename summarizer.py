@@ -57,6 +57,23 @@ def _organize_threads(emails: list[dict]) -> list[dict]:
     return result
 
 
+def _inject_date_range(summary_text: str, date_range: str) -> str:
+    """Inject date range into the first markdown heading of the summary.
+
+    If the first line is a `# ...` heading, append the date range in parentheses.
+    Otherwise, leave the text as-is (the card header will show the range).
+    """
+    range_suffix = f"（{date_range}）"
+    lines = summary_text.split("\n", 1)
+    first_line = lines[0].rstrip()
+    if first_line.startswith("# "):
+        # Only add if not already present
+        if date_range not in first_line:
+            lines[0] = first_line + range_suffix
+        return "\n".join(lines)
+    return summary_text
+
+
 def _build_prompt(emails: list[dict], list_name: str, date: str, lang: str = "zh") -> str:
     """Build the prompt for LLM API."""
     threads = _organize_threads(emails)
@@ -264,6 +281,7 @@ def generate_digest(
     progress_cb=None,
     force: bool = False,
     lang: str = "zh",
+    date_range: str = "",
 ) -> dict:
     """Generate an AI digest for the given emails.
 
@@ -319,6 +337,10 @@ def generate_digest(
         if progress_cb:
             progress_cb("error", f"LLM 调用失败: {e}")
         raise
+
+    # Inject date range into the first heading
+    if date_range:
+        summary_text = _inject_date_range(summary_text, date_range)
 
     if progress_cb:
         progress_cb("progress", "摘要生成完成，正在保存...", step="saving")
@@ -574,7 +596,7 @@ def generate_daily_summary(
 # --- GitHub Digest ---
 
 
-def _build_github_prompt(activity: dict, repo_name: str, days: int, lang: str = "zh") -> str:
+def _build_github_prompt(activity: dict, repo_name: str, days: int, lang: str = "zh", date_range: str = "") -> str:
     """Build the prompt for GitHub activity summary."""
     prs = activity.get("pulls", [])
     issues = activity.get("issues", [])
@@ -608,6 +630,7 @@ def _build_github_prompt(activity: dict, repo_name: str, days: int, lang: str = 
             sections += f"  URL: {url}\n"
             sections += f"  Author: {issue['user']} | Status: {state} | {issue.get('comments', 0)} comments{label_text}\n"
             sections += f"  Created: {issue.get('created_at', '')[:10]} | Updated: {issue.get('updated_at', '')[:10]}\n"
+
 
     if lang == "en":
         return f"""You are a GitHub project activity analyst. Analyze and summarize the following PR and Issue activity for the repository "{repo_name}" over the last {days} days.
@@ -661,6 +684,7 @@ def generate_github_digest(
     progress_cb=None,
     force: bool = False,
     lang: str = "zh",
+    date_range: str = "",
 ) -> dict:
     """Generate an AI digest for GitHub activity.
 
@@ -704,7 +728,7 @@ def generate_github_digest(
             f"正在构建提示词 ({len(prs)} 个 PR, {len(issues)} 个 Issue)...",
             step="build_prompt",
         )
-    prompt = _build_github_prompt(activity, repo_name, days, lang=lang)
+    prompt = _build_github_prompt(activity, repo_name, days, lang=lang, date_range=date_range)
 
     if progress_cb:
         provider_name = provider.get("name", provider.get("id", "unknown"))
@@ -721,6 +745,10 @@ def generate_github_digest(
         if progress_cb:
             progress_cb("error", f"LLM 调用失败: {e}")
         raise
+
+    # Inject date range into the first heading
+    if date_range:
+        summary_text = _inject_date_range(summary_text, date_range)
 
     if progress_cb:
         progress_cb("progress", "摘要生成完成，正在保存...", step="saving")

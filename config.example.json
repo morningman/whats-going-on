@@ -68,6 +68,9 @@
       }
     ]
   },
+  "feishu": {
+    "webhook_url": ""
+  },
   "slack": {
     "client_id": "",
     "client_secret": "",

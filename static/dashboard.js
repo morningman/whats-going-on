@@ -7,6 +7,7 @@ const globalSummaryStatus = document.getElementById('global-summary-status');
 const globalSummaryResult = document.getElementById('global-summary-result');
 
 let selectedDays = 3;
+let lastDashboardSummary = null; // Store full summary for Feishu push
 
 // Range selector
 dsRangeSelector.addEventListener('click', function (e) {
@@ -65,6 +66,10 @@ async function generateGlobalSummary(force = false) {
             return;
         }
         renderGlobalSummary(data);
+        // Collect all overview texts for Feishu push
+        const allOverviews = (data.lists || []).map(l => `## ${l.name}\n${l.overview}`).join('\n\n');
+        lastDashboardSummary = allOverviews;
+        showFeishuButton();
         showGlobalStatus('摘要生成成功！', 'success');
     } catch (e) {
         showGlobalStatus('生成摘要失败: ' + e.message, 'error');
@@ -232,6 +237,39 @@ globalSummaryResult.addEventListener('click', function (e) {
         return;
     }
 });
+
+// --- Feishu Push ---
+
+const btnFeishuPushDashboard = document.getElementById('btn-feishu-push-dashboard');
+
+function showFeishuButton() {
+    if (btnFeishuPushDashboard) btnFeishuPushDashboard.classList.remove('hidden');
+}
+
+if (btnFeishuPushDashboard) {
+    btnFeishuPushDashboard.addEventListener('click', async function () {
+        if (!lastDashboardSummary) {
+            showGlobalStatus('没有可推送的摘要内容', 'error');
+            return;
+        }
+        btnFeishuPushDashboard.disabled = true;
+        btnFeishuPushDashboard.innerHTML = '<span class="spinner"></span>推送中...';
+        try {
+            const resp = await fetch('/api/feishu/push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: lastDashboardSummary, title: '📊 全局信息汇总' }),
+            });
+            const result = await resp.json();
+            showGlobalStatus(result.message, result.ok ? 'success' : 'error');
+        } catch (e) {
+            showGlobalStatus('推送失败: ' + e.message, 'error');
+        } finally {
+            btnFeishuPushDashboard.disabled = false;
+            btnFeishuPushDashboard.textContent = '🐦 推送到飞书';
+        }
+    });
+}
 
 // Event listeners
 btnGlobalSummary.addEventListener('click', () => generateGlobalSummary(true));

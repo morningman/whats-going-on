@@ -27,7 +27,10 @@
 <div id="email-progress-log" class="progress-log hidden"></div>
 
 <div id="digest-section" class="card hidden">
-    <h2>📊 邮件摘要</h2>
+    <div class="digest-header">
+        <h2 id="email-digest-title">📊 邮件摘要</h2>
+        <button class="btn btn-sm btn-feishu hidden" id="btn-feishu-push-email" title="推送到飞书">🐦 推送到飞书</button>
+    </div>
     <div id="digest-content" class="digest-content"></div>
 </div>
 
@@ -40,7 +43,10 @@
     <h2 class="history-toggle" id="history-toggle">📜 历史摘要 <span class="toggle-icon">▶</span></h2>
     <div id="history-list" class="history-list hidden"></div>
     <div id="history-content" class="history-content hidden">
-        <button class="btn btn-sm btn-secondary" id="history-back">← 返回列表</button>
+        <div class="history-actions">
+            <button class="btn btn-sm btn-secondary" id="history-back">← 返回列表</button>
+            <button class="btn btn-sm btn-feishu hidden" id="btn-feishu-push-history" title="推送到飞书">🐦 推送到飞书</button>
+        </div>
         <div id="history-detail" class="digest-content"></div>
     </div>
 </div>

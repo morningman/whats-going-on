@@ -17,6 +17,7 @@ const ghIssueCount = document.getElementById('gh-issue-count');
 let selectedGhDays = 3;
 let selectedGhLang = 'zh';
 let selectedGhRange = null; // null = use days, 'last-week' = use start_date/end_date
+let lastGhSummary = null; // Store latest digest text for Feishu push
 
 // Helper: compute last week's Monday and Sunday (YYYY-MM-DD)
 function getLastWeekRange() {
@@ -195,6 +196,8 @@ function runCombinedFlow() {
                 dateRangeLabel = `${startDate.toISOString().slice(0, 10)} ~ ${endDate.toISOString().slice(0, 10)}`;
             }
             renderDigest(event.data, dateRangeLabel);
+            lastGhSummary = event.data.summary || '';
+            showFeishuButton();
             showGhStatus('加载完成，摘要已生成！', 'success');
             resetButton();
         }
@@ -320,6 +323,13 @@ function renderIssueItem(issue) {
 
 function renderDigest(data, dateRangeLabel) {
     ghDigestSection.classList.remove('hidden');
+    // Update title with date range
+    const titleEl = document.getElementById('gh-digest-title');
+    if (titleEl) {
+        titleEl.textContent = dateRangeLabel
+            ? `📊 仓库活动摘要（${dateRangeLabel}）`
+            : '📊 仓库活动摘要';
+    }
     ghDigestContent.innerHTML = renderMarkdown(data.summary);
     let metaHtml = '';
     if (dateRangeLabel) {
@@ -392,10 +402,15 @@ async function loadHistorySummaries() {
     }
 }
 
+let lastHistorySummary = null; // Store latest history summary for Feishu push
+
 async function viewHistorySummary(filename) {
     historyList.classList.add('hidden');
     historyContent.classList.remove('hidden');
     historyDetail.innerHTML = '<p style="color:#718096;">加载中...</p>';
+    const btnHistoryPush = document.getElementById('btn-feishu-push-history');
+    if (btnHistoryPush) btnHistoryPush.classList.add('hidden');
+    lastHistorySummary = null;
     try {
         const resp = await fetch(`/api/summaries/${encodeURIComponent(filename)}`);
         const data = await resp.json();
@@ -410,9 +425,73 @@ async function viewHistorySummary(filename) {
             content = content.slice(fmMatch[0].length);
         }
         historyDetail.innerHTML = renderMarkdown(content);
+        lastHistorySummary = content;
+        if (btnHistoryPush) btnHistoryPush.classList.remove('hidden');
     } catch (e) {
         historyDetail.innerHTML = '<p style="color:#e53e3e;">加载失败: ' + escapeHtml(e.message) + '</p>';
     }
+}
+
+// --- Feishu Push ---
+
+const btnFeishuPushGh = document.getElementById('btn-feishu-push-gh');
+
+function showFeishuButton() {
+    if (btnFeishuPushGh) btnFeishuPushGh.classList.remove('hidden');
+}
+
+if (btnFeishuPushGh) {
+    btnFeishuPushGh.addEventListener('click', async function () {
+        if (!lastGhSummary) {
+            showGhStatus('没有可推送的摘要内容', 'error');
+            return;
+        }
+        const repoName = repoSelect.options[repoSelect.selectedIndex]?.textContent || 'GitHub 摘要';
+        btnFeishuPushGh.disabled = true;
+        btnFeishuPushGh.innerHTML = '<span class="spinner"></span>推送中...';
+        try {
+            const resp = await fetch('/api/feishu/push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: lastGhSummary, title: `🐙 ${repoName}` }),
+            });
+            const result = await resp.json();
+            showGhStatus(result.message, result.ok ? 'success' : 'error');
+        } catch (e) {
+            showGhStatus('推送失败: ' + e.message, 'error');
+        } finally {
+            btnFeishuPushGh.disabled = false;
+            btnFeishuPushGh.textContent = '🐦 推送到飞书';
+        }
+    });
+}
+
+// --- Feishu Push (history) ---
+
+const btnFeishuPushHistory = document.getElementById('btn-feishu-push-history');
+if (btnFeishuPushHistory) {
+    btnFeishuPushHistory.addEventListener('click', async function () {
+        if (!lastHistorySummary) {
+            showGhStatus('没有可推送的摘要内容', 'error');
+            return;
+        }
+        btnFeishuPushHistory.disabled = true;
+        btnFeishuPushHistory.innerHTML = '<span class="spinner"></span>推送中...';
+        try {
+            const resp = await fetch('/api/feishu/push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: lastHistorySummary, title: '🐙 历史 GitHub 摘要' }),
+            });
+            const result = await resp.json();
+            showGhStatus(result.message, result.ok ? 'success' : 'error');
+        } catch (e) {
+            showGhStatus('推送失败: ' + e.message, 'error');
+        } finally {
+            btnFeishuPushHistory.disabled = false;
+            btnFeishuPushHistory.textContent = '🐦 推送到飞书';
+        }
+    });
 }
 
 // Event listeners

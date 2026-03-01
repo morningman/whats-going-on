@@ -463,6 +463,8 @@ async function loadConfig() {
     renderGithubRepos();
     // Load GitHub token
     githubTokenInput.value = currentConfig?.github?.token || '';
+    // Load Feishu webhook URL
+    document.getElementById('feishu-webhook').value = currentConfig?.feishu?.webhook_url || '';
   } catch (e) {
     showStatus('Failed to load config', 'error');
   }
@@ -489,6 +491,10 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   // Update GitHub token from input
   if (!currentConfig.github) currentConfig.github = { token: '', repos: [] };
   currentConfig.github.token = githubTokenInput.value.trim();
+
+  // Update Feishu webhook URL from input
+  if (!currentConfig.feishu) currentConfig.feishu = { webhook_url: '' };
+  currentConfig.feishu.webhook_url = document.getElementById('feishu-webhook').value.trim();
 
   try {
     const resp = await fetch('/api/config', {

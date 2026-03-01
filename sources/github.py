@@ -225,7 +225,13 @@ class GitHubSource:
         """Fetch combined PR + Issue activity for a repo."""
         logger.info("Fetching activity for %s/%s (last %d days, since_date=%s)", owner, repo, days, since_date)
         if progress_cb:
-            progress_cb("progress", f"开始获取 {owner}/{repo} 最近 {days} 天的活动数据...", step="start")
+            if since_date:
+                from datetime import timedelta as _td
+                end_d = datetime.strptime(since_date, "%Y-%m-%d") + _td(days=days - 1)
+                range_label = f"{since_date} ~ {end_d.strftime('%Y-%m-%d')}"
+                progress_cb("progress", f"开始获取 {owner}/{repo} {range_label} 的活动数据...", step="start")
+            else:
+                progress_cb("progress", f"开始获取 {owner}/{repo} 最近 {days} 天的活动数据...", step="start")
 
         prs = self.fetch_pull_requests(owner, repo, days, token, progress_cb=progress_cb, since_date=since_date)
         issues = self.fetch_issues(owner, repo, days, token, progress_cb=progress_cb, since_date=since_date)

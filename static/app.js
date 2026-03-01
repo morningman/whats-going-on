@@ -15,6 +15,7 @@ const emailList = document.getElementById('email-list');
 let selectedEmailDays = 3;
 let selectedEmailLang = 'zh';
 let selectedEmailRange = null; // null = use days, 'last-week' = use start_date/end_date
+let lastEmailSummary = null; // Store latest digest text for Feishu push
 
 // Helper: compute last week's Monday and Sunday (YYYY-MM-DD)
 function getLastWeekRange() {
@@ -204,6 +205,8 @@ function runCombinedFlow() {
         dateRangeLabel = `${startDate.toISOString().slice(0, 10)} ~ ${endDate.toISOString().slice(0, 10)}`;
       }
       renderDigest(event.data, dateRangeLabel);
+      lastEmailSummary = event.data.summary || '';
+      showFeishuButton();
       showEmailStatus('加载完成，摘要已生成！', 'success');
       resetButton();
     }
@@ -252,6 +255,13 @@ function renderEmails(emails) {
 
 function renderDigest(data, dateRangeLabel) {
   digestSection.classList.remove('hidden');
+  // Update title with date range
+  const titleEl = document.getElementById('email-digest-title');
+  if (titleEl) {
+    titleEl.textContent = dateRangeLabel
+      ? `📊 邮件摘要（${dateRangeLabel}）`
+      : '📊 邮件摘要';
+  }
   digestContent.innerHTML = renderMarkdown(data.summary);
   let metaHtml = '';
   if (dateRangeLabel) {
@@ -324,10 +334,15 @@ async function loadHistorySummaries() {
   }
 }
 
+let lastHistorySummary = null; // Store latest history summary for Feishu push
+
 async function viewHistorySummary(filename) {
   historyList.classList.add('hidden');
   historyContent.classList.remove('hidden');
   historyDetail.innerHTML = '<p style="color:#718096;">加载中...</p>';
+  const btnHistoryPush = document.getElementById('btn-feishu-push-history');
+  if (btnHistoryPush) btnHistoryPush.classList.add('hidden');
+  lastHistorySummary = null;
   try {
     const resp = await fetch(`/api/summaries/${encodeURIComponent(filename)}`);
     const data = await resp.json();
@@ -342,9 +357,73 @@ async function viewHistorySummary(filename) {
       content = content.slice(fmMatch[0].length);
     }
     historyDetail.innerHTML = renderMarkdown(content);
+    lastHistorySummary = content;
+    if (btnHistoryPush) btnHistoryPush.classList.remove('hidden');
   } catch (e) {
     historyDetail.innerHTML = '<p style="color:#e53e3e;">加载失败: ' + escapeHtml(e.message) + '</p>';
   }
+}
+
+// --- Feishu Push ---
+
+const btnFeishuPush = document.getElementById('btn-feishu-push-email');
+
+function showFeishuButton() {
+  if (btnFeishuPush) btnFeishuPush.classList.remove('hidden');
+}
+
+if (btnFeishuPush) {
+  btnFeishuPush.addEventListener('click', async function () {
+    if (!lastEmailSummary) {
+      showEmailStatus('没有可推送的摘要内容', 'error');
+      return;
+    }
+    const listName = listSelect.options[listSelect.selectedIndex]?.textContent || '邮件摘要';
+    btnFeishuPush.disabled = true;
+    btnFeishuPush.innerHTML = '<span class="spinner"></span>推送中...';
+    try {
+      const resp = await fetch('/api/feishu/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: lastEmailSummary, title: `📧 ${listName}` }),
+      });
+      const result = await resp.json();
+      showEmailStatus(result.message, result.ok ? 'success' : 'error');
+    } catch (e) {
+      showEmailStatus('推送失败: ' + e.message, 'error');
+    } finally {
+      btnFeishuPush.disabled = false;
+      btnFeishuPush.textContent = '🐦 推送到飞书';
+    }
+  });
+}
+
+// --- Feishu Push (history) ---
+
+const btnFeishuPushHistory = document.getElementById('btn-feishu-push-history');
+if (btnFeishuPushHistory) {
+  btnFeishuPushHistory.addEventListener('click', async function () {
+    if (!lastHistorySummary) {
+      showEmailStatus('没有可推送的摘要内容', 'error');
+      return;
+    }
+    btnFeishuPushHistory.disabled = true;
+    btnFeishuPushHistory.innerHTML = '<span class="spinner"></span>推送中...';
+    try {
+      const resp = await fetch('/api/feishu/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: lastHistorySummary, title: '📧 历史邮件摘要' }),
+      });
+      const result = await resp.json();
+      showEmailStatus(result.message, result.ok ? 'success' : 'error');
+    } catch (e) {
+      showEmailStatus('推送失败: ' + e.message, 'error');
+    } finally {
+      btnFeishuPushHistory.disabled = false;
+      btnFeishuPushHistory.textContent = '🐦 推送到飞书';
+    }
+  });
 }
 
 // Event listeners
