@@ -378,11 +378,13 @@ def api_digest():
 def api_email_digest_stream():
     """SSE endpoint: stream progress while fetching emails and generating digest."""
     list_id = request.args.get("list_id", "")
+    start_date = request.args.get("start_date", "")
+    end_date = request.args.get("end_date", "")
     try:
         days = int(request.args.get("days", "3"))
     except ValueError:
         days = 3
-    if days not in (1, 3, 7):
+    if not start_date and days not in (1, 3, 7):
         days = 3
     lang = request.args.get("lang", "zh")
     if lang not in ("zh", "en"):
@@ -411,8 +413,8 @@ def api_email_digest_stream():
         return Response(err_gen(), mimetype="text/event-stream")
 
     logger.info(
-        "SSE /api/email/digest/stream — list=%s (%s), days=%d",
-        list_id, ml["name"], days,
+        "SSE /api/email/digest/stream — list=%s (%s), days=%d, start_date=%s, end_date=%s",
+        list_id, ml["name"], days, start_date, end_date,
     )
 
     q = queue.Queue()
@@ -426,9 +428,21 @@ def api_email_digest_stream():
         try:
             # Build date list
             dates = []
-            for i in range(days):
-                d = datetime.now() - timedelta(days=i)
-                dates.append(d.strftime("%Y-%m-%d"))
+            if start_date and end_date:
+                # Use explicit date range
+                try:
+                    sd = datetime.strptime(start_date, "%Y-%m-%d")
+                    ed = datetime.strptime(end_date, "%Y-%m-%d")
+                    d = sd
+                    while d <= ed:
+                        dates.append(d.strftime("%Y-%m-%d"))
+                        d += timedelta(days=1)
+                except ValueError:
+                    dates = []
+            if not dates:
+                for i in range(days):
+                    d = datetime.now() - timedelta(days=i)
+                    dates.append(d.strftime("%Y-%m-%d"))
             dates.sort()
 
             fetcher = get_fetcher(ml["type"])
@@ -941,15 +955,28 @@ def api_github_activity_stream():
 def api_github_digest_stream():
     """SSE endpoint: stream progress while generating GitHub digest."""
     repo_id = request.args.get("repo_id", "")
+    start_date = request.args.get("start_date", "")
+    end_date = request.args.get("end_date", "")
     try:
         days = int(request.args.get("days", "3"))
     except ValueError:
         days = 3
-    if days not in (1, 3, 7):
+    if not start_date and days not in (1, 3, 7):
         days = 3
     lang = request.args.get("lang", "zh")
     if lang not in ("zh", "en"):
         lang = "zh"
+
+    # Compute effective days from start_date/end_date if provided
+    since_date = None
+    if start_date and end_date:
+        try:
+            sd = datetime.strptime(start_date, "%Y-%m-%d")
+            ed = datetime.strptime(end_date, "%Y-%m-%d")
+            days = (ed - sd).days + 1
+            since_date = start_date
+        except ValueError:
+            pass
 
     if not repo_id:
         def err_gen():
@@ -970,9 +997,11 @@ def api_github_digest_stream():
         return Response(err_gen(), mimetype="text/event-stream")
 
     today = datetime.now().strftime("%Y-%m-%d")
-    cache_key = f"github__{repo_id}__{today}__{days}d"
+    range_label = f"{start_date}__{end_date}" if start_date else f"{days}d"
+    cache_key = f"github__{repo_id}__{today}__{range_label}"
 
-    logger.info("SSE /api/github/digest/stream — repo=%s/%s, days=%d", repo["owner"], repo["repo"], days)
+    logger.info("SSE /api/github/digest/stream — repo=%s/%s, days=%d, start_date=%s, end_date=%s",
+                repo["owner"], repo["repo"], days, start_date, end_date)
 
     q = queue.Queue()
 
@@ -996,6 +1025,7 @@ def api_github_digest_stream():
                 activity = gh.fetch_activity(
                     repo["owner"], repo["repo"], days=days, token=token,
                     progress_cb=progress_cb,
+                    since_date=since_date,
                 )
                 cache.save_github_cache(repo_id, today, days, activity)
 

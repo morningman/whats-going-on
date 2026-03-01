@@ -16,6 +16,22 @@ const ghIssueCount = document.getElementById('gh-issue-count');
 
 let selectedGhDays = 3;
 let selectedGhLang = 'zh';
+let selectedGhRange = null; // null = use days, 'last-week' = use start_date/end_date
+
+// Helper: compute last week's Monday and Sunday (YYYY-MM-DD)
+function getLastWeekRange() {
+    const now = new Date();
+    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+    // Last week's Monday: go back to this week's Monday, then subtract 7
+    const thisMonday = new Date(now);
+    thisMonday.setDate(now.getDate() - ((dayOfWeek + 6) % 7));
+    const lastMonday = new Date(thisMonday);
+    lastMonday.setDate(thisMonday.getDate() - 7);
+    const lastSunday = new Date(lastMonday);
+    lastSunday.setDate(lastMonday.getDate() + 6);
+    const fmt = d => d.toISOString().slice(0, 10);
+    return { start: fmt(lastMonday), end: fmt(lastSunday) };
+}
 
 // Range selector
 ghRangeSelector.addEventListener('click', function (e) {
@@ -23,7 +39,12 @@ ghRangeSelector.addEventListener('click', function (e) {
     if (!btn) return;
     ghRangeSelector.querySelectorAll('.ds-range-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    selectedGhDays = parseInt(btn.dataset.days, 10);
+    if (btn.dataset.range === 'last-week') {
+        selectedGhRange = 'last-week';
+    } else {
+        selectedGhRange = null;
+        selectedGhDays = parseInt(btn.dataset.days, 10);
+    }
 });
 
 // Language selector
@@ -125,7 +146,13 @@ function runCombinedFlow() {
     ghActivitySection.classList.add('hidden');
     ghDigestSection.classList.add('hidden');
 
-    const url = `/api/github/digest/stream?repo_id=${encodeURIComponent(repoId)}&days=${selectedGhDays}&lang=${selectedGhLang}`;
+    let url;
+    if (selectedGhRange === 'last-week') {
+        const range = getLastWeekRange();
+        url = `/api/github/digest/stream?repo_id=${encodeURIComponent(repoId)}&start_date=${range.start}&end_date=${range.end}&lang=${selectedGhLang}`;
+    } else {
+        url = `/api/github/digest/stream?repo_id=${encodeURIComponent(repoId)}&days=${selectedGhDays}&lang=${selectedGhLang}`;
+    }
     const es = new EventSource(url);
 
     es.onmessage = function (e) {
@@ -156,7 +183,18 @@ function runCombinedFlow() {
             markProgressComplete();
             appendProgressItem('done', '摘要生成成功！');
             es.close();
-            renderDigest(event.data);
+            // Compute date range label for report header
+            let dateRangeLabel;
+            if (selectedGhRange === 'last-week') {
+                const range = getLastWeekRange();
+                dateRangeLabel = `${range.start} ~ ${range.end}`;
+            } else {
+                const endDate = new Date();
+                const startDate = new Date();
+                startDate.setDate(endDate.getDate() - (selectedGhDays - 1));
+                dateRangeLabel = `${startDate.toISOString().slice(0, 10)} ~ ${endDate.toISOString().slice(0, 10)}`;
+            }
+            renderDigest(event.data, dateRangeLabel);
             showGhStatus('加载完成，摘要已生成！', 'success');
             resetButton();
         }
@@ -280,12 +318,20 @@ function renderIssueItem(issue) {
   `;
 }
 
-function renderDigest(data) {
+function renderDigest(data, dateRangeLabel) {
     ghDigestSection.classList.remove('hidden');
     ghDigestContent.innerHTML = renderMarkdown(data.summary);
+    let metaHtml = '';
+    if (dateRangeLabel) {
+        metaHtml += `<span>📅 数据范围: ${dateRangeLabel}</span>`;
+    }
     if (data.generated_at) {
         const genTime = new Date(data.generated_at).toLocaleString('zh-CN');
-        ghDigestContent.innerHTML += `<p style="color:#718096;font-size:0.85rem;margin-top:12px;">⏱️ 生成于 ${genTime}</p>`;
+        if (metaHtml) metaHtml += `<span style="margin-left:16px;">⏱️ 生成于 ${genTime}</span>`;
+        else metaHtml += `<span>⏱️ 生成于 ${genTime}</span>`;
+    }
+    if (metaHtml) {
+        ghDigestContent.innerHTML += `<p style="color:#718096;font-size:0.85rem;margin-top:12px;">${metaHtml}</p>`;
     }
 }
 

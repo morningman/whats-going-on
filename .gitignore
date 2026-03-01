@@ -1,12 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Runtime data
 config.json
 data/
 log/
-__pycache__/
-*.pyc
 .env
-venv/
-.venv/
-output/
+
+# Process files
 *.pid
 *.log
 .email-watcher.pid
+
+# Build artifacts (legacy)
+output/

@@ -1,39 +1,44 @@
 #!/usr/bin/env bash
 #
-# run.sh — Email Watcher 启动/停止管理脚本
-# 兼容 macOS 和 Linux
+# dev.sh — What's Going On 统一开发/运行脚本
+# 直接从源码目录运行，智能管理 Python 虚拟环境
 #
 # 用法:
-#   ./run.sh start   [--port PORT] [--host HOST]   启动服务
-#   ./run.sh stop                                   停止服务
-#   ./run.sh restart [--port PORT] [--host HOST]   重启服务
-#   ./run.sh status                                 查看服务状态
-#   ./run.sh logs                                   查看日志
+#   ./dev.sh start   [--port PORT] [--host HOST]   启动服务
+#   ./dev.sh stop                                   停止服务
+#   ./dev.sh restart [--port PORT] [--host HOST]   重启服务
+#   ./dev.sh status                                 查看服务状态
+#   ./dev.sh logs    [-f]                           查看日志
+#   ./dev.sh setup                                  仅初始化/更新 venv
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PID_FILE="$SCRIPT_DIR/.email-watcher.pid"
-LOG_DIR="$SCRIPT_DIR/log"
-VENV_DIR="$SCRIPT_DIR/.venv"
+VENV_DIR="${SCRIPT_DIR}/.venv"
+PID_FILE="${SCRIPT_DIR}/.email-watcher.pid"
+LOG_DIR="${SCRIPT_DIR}/log"
+REQ_FILE="${SCRIPT_DIR}/requirements.txt"
+REQ_HASH_FILE="${VENV_DIR}/.requirements.hash"
 
 # 默认参数
 HOST="0.0.0.0"
 PORT="5000"
+FOLLOW_LOGS="false"
 
 # ─── 工具函数 ───
 
 print_usage() {
-    echo "Email Watcher — 服务管理脚本"
+    echo "What's Going On — 开发/运行脚本"
     echo ""
-    echo "用法: $0 {start|stop|restart|status|logs} [选项]"
+    echo "用法: $0 {start|stop|restart|status|logs|setup} [选项]"
     echo ""
     echo "命令:"
-    echo "  start     启动服务"
+    echo "  start     启动服务（自动初始化环境）"
     echo "  stop      停止服务"
     echo "  restart   重启服务"
     echo "  status    查看服务状态"
     echo "  logs      查看运行日志"
+    echo "  setup     仅初始化/更新虚拟环境（不启动服务）"
     echo ""
     echo "选项:"
     echo "  --port PORT   指定端口号 (默认: 5000)"
@@ -60,12 +65,73 @@ is_running() {
     fi
 }
 
-check_venv() {
-    if [ ! -d "$VENV_DIR" ]; then
-        echo "❌ 虚拟环境不存在: $VENV_DIR"
-        echo "   请先运行 build.sh 构建项目"
+# 计算 requirements.txt 的校验和（兼容 macOS 和 Linux）
+calc_hash() {
+    if command -v md5sum &>/dev/null; then
+        md5sum "$REQ_FILE" | cut -d' ' -f1
+    elif command -v md5 &>/dev/null; then
+        md5 -q "$REQ_FILE"
+    else
+        # 回退方案：用文件修改时间
+        stat -f "%m" "$REQ_FILE" 2>/dev/null || stat -c "%Y" "$REQ_FILE" 2>/dev/null
+    fi
+}
+
+# ─── 环境管理 ───
+
+ensure_venv() {
+    # 1. 检查 Python 3
+    local PYTHON=""
+    for candidate in python3 python; do
+        if command -v "$candidate" &>/dev/null; then
+            local version major
+            version=$("$candidate" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+            major=$(echo "$version" | cut -d. -f1)
+            if [ "$major" = "3" ]; then
+                PYTHON="$candidate"
+                break
+            fi
+        fi
+    done
+
+    if [ -z "$PYTHON" ]; then
+        echo "❌ 未找到 Python 3，请先安装 Python 3.10+"
         exit 1
     fi
+
+    # 2. 创建 venv（如果不存在）
+    if [ ! -d "$VENV_DIR" ] || [ ! -f "$VENV_DIR/bin/python" ]; then
+        echo "🐍 创建 Python 虚拟环境..."
+        "$PYTHON" -m venv "$VENV_DIR"
+        echo "   ✅ 虚拟环境创建完成"
+        # 强制安装依赖
+        install_deps
+        return
+    fi
+
+    # 3. 检查依赖是否需要更新
+    local current_hash
+    current_hash=$(calc_hash)
+    local saved_hash=""
+    if [ -f "$REQ_HASH_FILE" ]; then
+        saved_hash=$(cat "$REQ_HASH_FILE")
+    fi
+
+    if [ "$current_hash" != "$saved_hash" ]; then
+        echo "📦 检测到 requirements.txt 变更，更新依赖..."
+        install_deps
+    else
+        echo "✅ 虚拟环境就绪（依赖无变更，跳过安装）"
+    fi
+}
+
+install_deps() {
+    echo "📥 安装 Python 依赖..."
+    "$VENV_DIR/bin/pip" install --upgrade pip -q
+    "$VENV_DIR/bin/pip" install -r "$REQ_FILE" -q
+    # 保存 hash
+    calc_hash > "$REQ_HASH_FILE"
+    echo "   ✅ 依赖安装完成"
 }
 
 check_config() {
@@ -79,13 +145,21 @@ check_config() {
 
 # ─── 命令实现 ───
 
-do_start() {
+do_setup() {
     echo "=============================="
-    echo "  Email Watcher — Start"
+    echo "  What's Going On — Setup"
     echo "=============================="
     echo ""
+    ensure_venv
+    echo ""
+    echo "✅ 环境初始化完成"
+}
 
-    check_venv
+do_start() {
+    echo "=============================="
+    echo "  What's Going On — Start"
+    echo "=============================="
+    echo ""
 
     if is_running; then
         local pid
@@ -95,20 +169,26 @@ do_start() {
         exit 0
     fi
 
+    ensure_venv
     check_config
 
-    echo "🚀 启动 Email Watcher..."
+    echo ""
+    echo "🚀 启动 What's Going On..."
     echo "   Host: $HOST"
     echo "   Port: $PORT"
     echo "   日志目录: $LOG_DIR"
     echo ""
 
-    # 创建日志目录
+    # 创建运行时目录
     mkdir -p "$LOG_DIR"
+    mkdir -p "$SCRIPT_DIR/data/emails"
+    mkdir -p "$SCRIPT_DIR/data/digests"
+    mkdir -p "$SCRIPT_DIR/data/cache/emails"
+    mkdir -p "$SCRIPT_DIR/data/cache/github"
+    mkdir -p "$SCRIPT_DIR/data/summaries"
 
-    # 激活虚拟环境并启动 Flask
+    # 直接从源码目录启动 Flask
     (
-        source "$VENV_DIR/bin/activate"
         cd "$SCRIPT_DIR"
         export FLASK_APP=app.py
         nohup "$VENV_DIR/bin/python" -c "
@@ -139,7 +219,6 @@ app.run(host='${HOST}', port=${PORT}, debug=False)
         echo "❌ 服务启动失败，请查看日志:"
         echo "   cat $LOG_DIR/console.log"
         echo "   cat $LOG_DIR/app.log"
-        # 清理 PID 文件
         rm -f "$PID_FILE"
         exit 1
     fi
@@ -147,7 +226,7 @@ app.run(host='${HOST}', port=${PORT}, debug=False)
 
 do_stop() {
     echo "=============================="
-    echo "  Email Watcher — Stop"
+    echo "  What's Going On — Stop"
     echo "=============================="
     echo ""
 
@@ -190,7 +269,7 @@ do_restart() {
 
 do_status() {
     echo "=============================="
-    echo "  Email Watcher — Status"
+    echo "  What's Going On — Status"
     echo "=============================="
     echo ""
 
@@ -201,15 +280,12 @@ do_status() {
         echo "   PID:  $pid"
         echo "   地址: http://localhost:${PORT}"
         echo ""
-
-        # 显示进程信息（兼容 macOS 和 Linux）
         if command -v ps &>/dev/null; then
             echo "   进程信息:"
             ps -p "$pid" -o pid,ppid,%cpu,%mem,etime,command 2>/dev/null | head -5 || true
         fi
     else
         echo "🔴 服务未运行"
-        # 清理残留的 PID 文件
         rm -f "$PID_FILE"
     fi
 }
@@ -223,7 +299,7 @@ do_logs() {
     fi
 
     echo "📄 日志目录: $LOG_DIR"
-    echo "   app.log      — 应用详细日志（含 API 调用、邮件获取等）"
+    echo "   app.log      — 应用详细日志"
     echo "   console.log  — 控制台输出"
     echo "───────────────────────────────"
 
@@ -248,8 +324,6 @@ fi
 COMMAND="$1"
 shift
 
-# 解析可选参数
-FOLLOW_LOGS="false"
 while [ $# -gt 0 ]; do
     case "$1" in
         --port)
@@ -289,6 +363,9 @@ case "$COMMAND" in
         ;;
     logs)
         do_logs
+        ;;
+    setup)
+        do_setup
         ;;
     *)
         echo "❌ 未知命令: $COMMAND"

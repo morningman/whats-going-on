@@ -64,10 +64,13 @@ class GitHubSource:
 
     def fetch_pull_requests(
         self, owner: str, repo: str, days: int = 3, token: str = "",
-        progress_cb=None,
+        progress_cb=None, since_date: str = None,
     ) -> list[dict]:
         """Fetch PRs updated within the last N days, targeting the default branch only."""
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        if since_date:
+            since = datetime.strptime(since_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).isoformat()
+        else:
+            since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         url = f"{API_BASE}/repos/{owner}/{repo}/pulls"
         all_prs = []
         page = 1
@@ -145,10 +148,13 @@ class GitHubSource:
 
     def fetch_issues(
         self, owner: str, repo: str, days: int = 3, token: str = "",
-        progress_cb=None,
+        progress_cb=None, since_date: str = None,
     ) -> list[dict]:
         """Fetch issues (excluding PRs) updated within the last N days."""
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        if since_date:
+            since = datetime.strptime(since_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).isoformat()
+        else:
+            since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         url = f"{API_BASE}/repos/{owner}/{repo}/issues"
         all_issues = []
         page = 1
@@ -214,15 +220,15 @@ class GitHubSource:
 
     def fetch_activity(
         self, owner: str, repo: str, days: int = 3, token: str = "",
-        progress_cb=None,
+        progress_cb=None, since_date: str = None,
     ) -> dict:
         """Fetch combined PR + Issue activity for a repo."""
-        logger.info("Fetching activity for %s/%s (last %d days)", owner, repo, days)
+        logger.info("Fetching activity for %s/%s (last %d days, since_date=%s)", owner, repo, days, since_date)
         if progress_cb:
             progress_cb("progress", f"开始获取 {owner}/{repo} 最近 {days} 天的活动数据...", step="start")
 
-        prs = self.fetch_pull_requests(owner, repo, days, token, progress_cb=progress_cb)
-        issues = self.fetch_issues(owner, repo, days, token, progress_cb=progress_cb)
+        prs = self.fetch_pull_requests(owner, repo, days, token, progress_cb=progress_cb, since_date=since_date)
+        issues = self.fetch_issues(owner, repo, days, token, progress_cb=progress_cb, since_date=since_date)
 
         stats = {
             "total_prs": len(prs),
