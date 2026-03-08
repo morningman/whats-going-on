@@ -62,15 +62,42 @@ class GitHubSource:
             progress_cb("progress", f"默认分支：{default_branch}", step="fetch_default_branch_done")
         return default_branch
 
+    @staticmethod
+    def _pr_in_range(pr: dict, since_iso: str, until_iso: str = "") -> bool:
+        """Check if a PR was created or merged within [since_iso, until_iso].
+
+        A PR is considered "in range" if:
+          - created_at >= since_iso (opened in the window), OR
+          - merged_at  >= since_iso (merged in the window)
+        AND if until_iso is set, at least one of those dates <= until_iso.
+        """
+        created = pr.get("created_at", "")
+        merged = pr.get("merged_at", "")  # may be empty string for unmerged PRs
+
+        created_in = created >= since_iso and (not until_iso or created <= until_iso)
+        merged_in = bool(merged) and merged >= since_iso and (not until_iso or merged <= until_iso)
+        return created_in or merged_in
+
     def fetch_pull_requests(
         self, owner: str, repo: str, days: int = 3, token: str = "",
         progress_cb=None, since_date: str = None, until_date: str = None,
     ) -> list[dict]:
-        """Fetch PRs updated within the last N days, targeting the default branch only."""
+        """Fetch PRs created or merged within the time window, targeting the default branch only.
+
+        Uses updated_at for API pagination (superset), then filters by
+        created_at / merged_at so only genuinely relevant PRs are returned.
+        """
         if since_date:
-            since = datetime.strptime(since_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).isoformat()
+            since_iso = datetime.strptime(since_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).isoformat()
         else:
-            since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+            since_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        until_iso = ""
+        if until_date:
+            until_iso = datetime.strptime(until_date, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            ).isoformat()
+
         url = f"{API_BASE}/repos/{owner}/{repo}/pulls"
         all_prs = []
         page = 1
@@ -107,35 +134,28 @@ class GitHubSource:
             if not prs:
                 break
 
+            stop = False
             for pr in prs:
                 updated = pr.get("updated_at", "")
-                if updated < since:
-                    # PRs are sorted by updated desc, so we can stop
-                    filtered = [p for p in prs if p.get("updated_at", "") >= since]
-                    result = self._normalize_prs(all_prs + filtered)
-                    # Filter by until_date if provided (upper bound)
-                    if until_date:
-                        until_iso = datetime.strptime(until_date, "%Y-%m-%d").replace(
-                            hour=23, minute=59, second=59, tzinfo=timezone.utc
-                        ).isoformat()
-                        result = [p for p in result if p["updated_at"] <= until_iso]
-                    if progress_cb:
-                        progress_cb("progress", f"PR 数据获取完成，共 {len(result)} 条", step="fetch_prs_done")
-                    return result
-
+                if updated < since_iso:
+                    # PRs are sorted by updated desc — any remaining PRs
+                    # have even older updated_at, so we can stop pagination.
+                    # But first, collect the ones from this page that are still
+                    # above the threshold (updated_at >= since_iso).
+                    all_prs.extend(p for p in prs if p.get("updated_at", "") >= since_iso
+                                   and p not in all_prs)
+                    stop = True
+                    break
                 all_prs.append(pr)
 
-            if len(prs) < 100:
+            if stop or len(prs) < 100:
                 break
             page += 1
 
+        # Normalize, then apply the created_at / merged_at filter
         result = self._normalize_prs(all_prs)
-        # Filter by until_date if provided (upper bound)
-        if until_date:
-            until_iso = datetime.strptime(until_date, "%Y-%m-%d").replace(
-                hour=23, minute=59, second=59, tzinfo=timezone.utc
-            ).isoformat()
-            result = [p for p in result if p["updated_at"] <= until_iso]
+        result = [p for p in result if self._pr_in_range(p, since_iso, until_iso)]
+
         if progress_cb:
             progress_cb("progress", f"PR 数据获取完成，共 {len(result)} 条", step="fetch_prs_done")
         return result
@@ -152,6 +172,7 @@ class GitHubSource:
                 "labels": [l["name"] for l in pr.get("labels", [])],
                 "created_at": pr.get("created_at", ""),
                 "updated_at": pr.get("updated_at", ""),
+                "merged_at": pr.get("merged_at", ""),
                 "html_url": pr.get("html_url", ""),
                 "merged": bool(pr.get("merged_at")),
                 "draft": pr.get("draft", False),

@@ -18,6 +18,7 @@ let selectedGhDays = 3;
 let selectedGhLang = 'zh';
 let selectedGhRange = null; // null = use days, 'last-week' = use start_date/end_date
 let lastGhSummary = null; // Store latest digest text for Feishu push
+let lastGhActivity = null; // Store latest activity data for Slack voting poll
 
 // Helper: compute last week's Monday and Sunday (YYYY-MM-DD)
 function getLastWeekRange() {
@@ -173,6 +174,7 @@ function runCombinedFlow() {
             markProgressComplete();
             appendProgressItem('done', '活动数据加载完成，开始生成摘要...');
             renderActivity(event.data);
+            lastGhActivity = event.data; // Store for Slack voting poll
             btnGhRun.innerHTML = '<span class="spinner"></span>生成摘要中...';
         } else if (event.type === 'error') {
             appendProgressItem('error', event.message);
@@ -514,7 +516,11 @@ if (btnSlackPushGh) {
             const resp = await fetch('/api/slack/push', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: lastGhSummary, title: `🐙 ${repoName}` }),
+                body: JSON.stringify({
+                    content: lastGhSummary,
+                    title: `🐙 ${repoName}`,
+                    voting_items: lastGhActivity || undefined,
+                }),
             });
             const result = await resp.json();
             showGhStatus(result.message, result.ok ? 'success' : 'error');
@@ -542,7 +548,11 @@ if (btnSlackPushHistory) {
             const resp = await fetch('/api/slack/push', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: lastHistorySummary, title: '🐙 历史 GitHub 摘要' }),
+                body: JSON.stringify({
+                    content: lastHistorySummary,
+                    title: '🐙 历史 GitHub 摘要',
+                    voting_items: lastGhActivity || undefined,
+                }),
             });
             const result = await resp.json();
             showGhStatus(result.message, result.ok ? 'success' : 'error');

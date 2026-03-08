@@ -124,14 +124,18 @@ def load_github_cache_range(repo_id: str, dates: list[str]) -> tuple[dict, list[
 
 
 def _split_activity_by_day(activity: dict) -> dict[str, dict]:
-    """Split combined activity into per-day buckets based on updated_at.
+    """Split combined activity into per-day buckets.
+
+    PRs are bucketed by merged_at (if merged) or created_at (otherwise).
+    Issues are bucketed by updated_at (covers both new issues and new comments).
 
     Returns {date_str: {"pulls": [...], "issues": [...]}}.
     """
     day_buckets: dict[str, dict] = {}
 
     for pr in activity.get("pulls", []):
-        date = pr.get("updated_at", "")[:10]
+        # Use merged_at for merged PRs, created_at for open/closed PRs
+        date = (pr.get("merged_at") or pr.get("created_at", ""))[:10]
         if not date:
             continue
         day_buckets.setdefault(date, {"pulls": [], "issues": []})
@@ -148,7 +152,7 @@ def _split_activity_by_day(activity: dict) -> dict[str, dict]:
 
 
 def save_github_cache_days(repo_id: str, activity: dict):
-    """Split activity by updated_at date and save each day independently.
+    """Split activity by date and save each day independently.
 
     Today's data is skipped (always re-fetched).
     """

@@ -1271,6 +1271,114 @@ def api_feishu_push():
 # --- Slack Push API ---
 
 
+def _select_top_items(activity: dict, max_items: int = 3) -> list[dict]:
+    """Select the most interesting PRs and Issues from activity data.
+
+    Uses a simple scoring heuristic based on comments, merged status,
+    recency, and labels to pick items users are most likely to care about.
+    Returns up to `max_items` items, each annotated with a 'kind' field.
+    """
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    scored = []
+
+    for pr in activity.get("pulls", []):
+        score = 0
+        if pr.get("merged"):
+            score += 3
+        elif pr.get("state") == "open":
+            score += 1
+        if pr.get("labels"):
+            score += 1
+        # Recency bonus: updated within last 24h
+        try:
+            updated = datetime.fromisoformat(pr["updated_at"].replace("Z", "+00:00"))
+            if (now - updated).total_seconds() < 86400:
+                score += 1
+        except Exception:
+            pass
+        scored.append({**pr, "_score": score, "kind": "PR"})
+
+    for issue in activity.get("issues", []):
+        score = 0
+        comments = issue.get("comments", 0)
+        score += min(comments // 2, 5)  # +1 per 2 comments, cap at 5
+        if issue.get("state") == "open":
+            score += 1
+        if issue.get("labels"):
+            score += 1
+        try:
+            updated = datetime.fromisoformat(issue["updated_at"].replace("Z", "+00:00"))
+            if (now - updated).total_seconds() < 86400:
+                score += 1
+        except Exception:
+            pass
+        scored.append({**issue, "_score": score, "kind": "Issue"})
+
+    scored.sort(key=lambda x: x["_score"], reverse=True)
+    return scored[:max_items]
+
+
+def _build_voting_poll_blocks(top_items: list[dict]) -> list[dict]:
+    """Build Slack Block Kit blocks for a voting poll section.
+
+    Renders up to 3 items with numbered emojis (1️⃣ 2️⃣ 3️⃣).
+    Users vote by adding the corresponding emoji reaction to the message.
+    """
+    if not top_items:
+        return []
+
+    number_emojis = ["1️⃣", "2️⃣", "3️⃣"]
+    blocks = [
+        {"type": "divider"},
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "🗳️ 投票：你对哪个 PR/Issue 最感兴趣？", "emoji": True},
+        },
+    ]
+
+    for i, item in enumerate(top_items[:3]):
+        emoji = number_emojis[i]
+        kind = item.get("kind", "PR")
+        number = item.get("number", "")
+        title = item.get("title", "Untitled")
+        url = item.get("html_url", "")
+        user = item.get("user", "")
+
+        # Build description line
+        meta_parts = [f"by {user}"] if user else []
+        if kind == "PR":
+            state = "Merged" if item.get("merged") else item.get("state", "open").capitalize()
+            meta_parts.append(state)
+        else:
+            comments = item.get("comments", 0)
+            meta_parts.append(f"{comments} comments")
+
+        meta = " · ".join(meta_parts)
+        link = f"<{url}|#{number}>" if url else f"#{number}"
+
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"{emoji}  *[{kind}] {link} {title}*\n      {meta}",
+            },
+        })
+
+    blocks.append({
+        "type": "context",
+        "elements": [
+            {
+                "type": "mrkdwn",
+                "text": "👆 请使用表情回复 1️⃣ 2️⃣ 3️⃣ 来投票，让我们知道你关注哪些内容！",
+            }
+        ],
+    })
+
+    return blocks
+
+
 def _markdown_to_slack_blocks(md_text: str, title: str = "") -> list[dict]:
     """Convert Markdown text to Slack Block Kit blocks.
 
@@ -1330,7 +1438,11 @@ def _markdown_to_slack_blocks(md_text: str, title: str = "") -> list[dict]:
 
 @app.route("/api/slack/push", methods=["POST"])
 def api_slack_push():
-    """Push AI summary content to a Slack channel via Incoming Webhook."""
+    """Push AI summary content to a Slack channel via Incoming Webhook.
+
+    Accepts optional 'voting_items' (activity dict with pulls/issues) to
+    append a voting poll section at the end of the message.
+    """
     config = load_config()
     webhook_url = config.get("slack", {}).get("push_webhook_url", "")
     if not webhook_url:
@@ -1344,10 +1456,21 @@ def api_slack_push():
 
     content = data["content"]
     title = data.get("title", "📊 AI 摘要推送")
-    logger.info("POST /api/slack/push — pushing to Slack, title=%s, content_len=%d", title, len(content))
+    activity = data.get("voting_items")  # optional: {pulls: [...], issues: [...]}
+    logger.info("POST /api/slack/push — pushing to Slack, title=%s, content_len=%d, has_voting=%s",
+                title, len(content), bool(activity))
 
     try:
         blocks = _markdown_to_slack_blocks(content, title)
+
+        # Append voting poll if activity data is provided
+        if activity and isinstance(activity, dict):
+            top_items = _select_top_items(activity, max_items=3)
+            if top_items:
+                poll_blocks = _build_voting_poll_blocks(top_items)
+                blocks.extend(poll_blocks)
+                logger.info("POST /api/slack/push — appended voting poll with %d items", len(top_items))
+
         payload = {"blocks": blocks}
         resp = http_requests.post(
             webhook_url,
