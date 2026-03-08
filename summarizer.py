@@ -645,6 +645,7 @@ Provide a structured Markdown summary containing:
 4. **Active Issues**: List noteworthy Issues, especially those with many comments or important labels. Each Issue must include a clickable link in the format [#number](URL)
 
 Note: When mentioning PRs or Issues, always use Markdown link format [#number](URL) to make them clickable to the GitHub page.
+IMPORTANT: Use unordered bullet lists (- item) to present PRs and Issues. Do NOT use markdown tables.
 
 Statistics:
 - Total PRs: {stats.get('total_prs', 0)} (Merged: {stats.get('merged_prs', 0)}, Open: {stats.get('open_prs', 0)}, Closed: {stats.get('closed_prs', 0)})
@@ -665,6 +666,7 @@ Statistics:
 4. **活跃 Issue**: 列出值得关注的 Issue，特别是评论较多或有重要标签的。每个 Issue 必须包含可点击的链接，格式为 [#编号](链接地址)
 
 注意：在提到 PR 或 Issue 时，务必使用 Markdown 链接格式 [#编号](URL) 使其可点击跳转到 GitHub 页面。
+**重要：请使用无序列表（- 列表项）来展示 PR 和 Issue，不要使用 Markdown 表格。**
 
 统计数据:
 - PR 总数: {stats.get('total_prs', 0)} (合并: {stats.get('merged_prs', 0)}, 开放: {stats.get('open_prs', 0)}, 关闭: {stats.get('closed_prs', 0)})
@@ -778,6 +780,200 @@ def generate_github_digest(
         logger.exception("Failed to export GitHub summary to Markdown")
 
     logger.info("GitHub digest complete for %s", cache_key)
+    return digest
+
+
+# --- Slack Digest ---
+
+
+def _build_slack_prompt(messages: list[dict], channel_name: str, days: int,
+                        lang: str = "zh", date_range: str = "") -> str:
+    """Build the prompt for Slack message summary."""
+    # Group messages by date for clarity
+    by_date: dict[str, list[dict]] = {}
+    for msg in messages:
+        date = msg.get("date", "unknown")
+        by_date.setdefault(date, [])
+        by_date[date].append(msg)
+
+    sections = ""
+    for date in sorted(by_date.keys()):
+        day_msgs = by_date[date]
+        sections += f"\n## {date} ({len(day_msgs)} messages)\n"
+        for msg in day_msgs:
+            text = msg.get("text", "")[:1500]
+            user = msg.get("user", "unknown")
+            reactions = " ".join(msg.get("reactions", []))
+            reaction_text = f"  [Reactions: {reactions}]" if reactions else ""
+            thread_count = msg.get("thread_reply_count", 0)
+            thread_text = f"  [Thread: {thread_count} replies]" if thread_count else ""
+
+            sections += f"\n- **{user}**: {text}{reaction_text}{thread_text}\n"
+
+            # Include thread replies if available
+            for reply in msg.get("replies_preview", []):
+                reply_text = reply.get("text", "")[:500]
+                reply_user = reply.get("user", "unknown")
+                sections += f"  - ↳ **{reply_user}**: {reply_text}\n"
+
+    total_msgs = len(messages)
+    total_threads = sum(1 for m in messages if m.get("thread_reply_count", 0) > 0)
+    range_desc = date_range if date_range else f"最近 {days} 天"
+
+    if lang == "en":
+        return f"""You are a Slack channel digest assistant. Analyze and summarize the following messages from the Slack channel "#{channel_name}" over {range_desc}.
+
+**Please output in English.**
+
+Provide a structured Markdown summary containing:
+
+1. **Overview**: 2-3 sentences summarizing the channel's activity and main topics
+2. **Key Discussions**: List the most important discussion threads and topics, summarizing key points and conclusions
+3. **Decisions & Action Items**: Any decisions made or action items agreed upon
+4. **Notable Highlights**: Any particularly important messages, widely-reacted messages, or trending topics
+5. **Active Participants**: Note the most active contributors (if relevant)
+
+Keep it concise but informative. Focus on substance over mechanics.
+
+Statistics:
+- Total messages: {total_msgs}
+- Messages with threads: {total_threads}
+- Time range: {range_desc}
+
+---
+{sections}"""
+    else:
+        return f"""你是一个 Slack 频道摘要助手。请对以下来自 Slack 频道 "#{channel_name}" {range_desc}的消息进行分析和总结。
+
+**请使用中文输出。**
+
+请提供一个结构化的 Markdown 格式摘要，包含：
+
+1. **概览**: 用 2-3 句话概括频道的活动情况和主要话题
+2. **主要讨论**: 列出最重要的讨论主题和内容，总结要点和结论
+3. **决策与行动项**: 任何已做出的决定或达成的行动事项
+4. **值得关注**: 任何特别重要的消息、获得较多反应的消息或热门话题
+5. **活跃参与者**: 列出最活跃的贡献者（如果相关的话）
+
+保持简洁但信息丰富。重点关注内容实质而非形式。
+
+统计数据:
+- 消息总数: {total_msgs}
+- 包含讨论串的消息: {total_threads}
+- 时间范围: {range_desc}
+
+---
+{sections}"""
+
+
+def generate_slack_digest(
+    messages: list[dict],
+    channel_key: str,
+    channel_name: str,
+    days: int,
+    llm_config: dict,
+    cache_key: str,
+    progress_cb=None,
+    force: bool = False,
+    lang: str = "zh",
+    date_range: str = "",
+) -> dict:
+    """Generate an AI digest for Slack channel messages.
+
+    Returns {"summary": str, "generated_at": str, "stats": dict}
+    """
+    # Check cache (skip when force=True)
+    if not force:
+        if progress_cb:
+            progress_cb("progress", "正在检查缓存...", step="cache_check")
+        cached = load_digest(cache_key, "")
+        if cached:
+            logger.info("Returning cached Slack digest for %s", cache_key)
+            if progress_cb:
+                progress_cb("progress", "找到缓存的摘要，直接返回", step="cache_hit")
+            return cached
+    else:
+        logger.info("Force regenerating Slack digest for %s (skipping cache)", cache_key)
+
+    if not messages:
+        logger.info("No Slack messages for %s (%s)", channel_key, channel_name)
+        if progress_cb:
+            progress_cb("progress", "没有找到消息", step="no_messages")
+        return {
+            "summary": "在所选时间范围内没有频道消息。",
+            "generated_at": "",
+            "stats": {"total_messages": 0},
+        }
+
+    total_msgs = len(messages)
+    total_threads = sum(1 for m in messages if m.get("thread_reply_count", 0) > 0)
+    stats = {
+        "total_messages": total_msgs,
+        "threaded_messages": total_threads,
+    }
+
+    logger.info("Generating Slack digest for %s (%s), days=%d, messages=%d",
+                channel_key, channel_name, days, total_msgs)
+
+    if progress_cb:
+        progress_cb("progress", "正在获取 LLM 配置...", step="llm_config")
+    provider = _get_active_provider(llm_config)
+
+    if progress_cb:
+        progress_cb(
+            "progress",
+            f"正在构建提示词 ({total_msgs} 条消息)...",
+            step="build_prompt",
+        )
+    prompt = _build_slack_prompt(messages, channel_name, days, lang=lang, date_range=date_range)
+
+    if progress_cb:
+        provider_name = provider.get("name", provider.get("id", "unknown"))
+        model = provider.get("model", "unknown")
+        progress_cb(
+            "progress",
+            f"正在调用 LLM ({provider_name} / {model})，请耐心等待...",
+            step="llm_call",
+        )
+
+    try:
+        summary_text = _call_llm(prompt, provider)
+    except Exception as e:
+        if progress_cb:
+            progress_cb("error", f"LLM 调用失败: {e}")
+        raise
+
+    # Inject date range into the first heading
+    if date_range:
+        summary_text = _inject_date_range(summary_text, date_range)
+
+    if progress_cb:
+        progress_cb("progress", "摘要生成完成，正在保存...", step="saving")
+
+    digest = {
+        "summary": summary_text,
+        "generated_at": datetime.now().isoformat(),
+        "stats": stats,
+    }
+
+    save_digest(cache_key, "", digest)
+
+    # Export summary to Markdown file
+    try:
+        content_date = datetime.now().strftime("%Y-%m-%d")
+        export_summary_markdown(
+            source_type="slack",
+            source_id=channel_key,
+            content_date=content_date,
+            lang=lang,
+            summary_text=summary_text,
+            metadata={"channel_name": channel_name, "days": days,
+                      "total_messages": total_msgs, "threaded_messages": total_threads},
+        )
+    except Exception:
+        logger.exception("Failed to export Slack summary to Markdown")
+
+    logger.info("Slack digest complete for %s", cache_key)
     return digest
 
 

@@ -7,15 +7,59 @@
     <p class="page-desc">浏览 Slack 工作区频道消息，生成讨论摘要</p>
 </div>
 
-<div class="coming-soon-card card">
-    <div class="coming-soon-icon">🚧</div>
-    <h3>Coming Soon</h3>
-    <p>Slack 集成功能正在开发中，将在下一版本推出。</p>
-    <ul class="coming-soon-features">
-        <li>🔗 通过 OAuth 连接 Slack 工作区</li>
-        <li>📋 浏览指定频道的消息</li>
-        <li>🤖 AI 生成频道消息摘要</li>
-        <li>📊 集成到全局 Dashboard 汇总</li>
-    </ul>
+<div class="controls">
+    <select id="workspace-select">
+        <option value="">-- 选择工作区 --</option>
+    </select>
+    <select id="channel-select" disabled>
+        <option value="">-- 选择频道 --</option>
+    </select>
+    <div class="ds-range-selector" id="slack-range-selector">
+        <button class="ds-range-btn active" data-days="3">最近 3 天</button>
+        <button class="ds-range-btn" data-days="7">最近 7 天</button>
+        <button class="ds-range-btn" data-range="last-week">上一周</button>
+    </div>
+    <div class="ds-range-selector" id="slack-lang-selector">
+        <button class="ds-range-btn active" data-lang="zh">中文</button>
+        <button class="ds-range-btn" data-lang="en">English</button>
+    </div>
+    <button class="btn btn-daily-summary" id="btn-slack-run">加载并生成摘要</button>
 </div>
+
+<div id="slack-status" class="status hidden"></div>
+<div id="slack-progress-log" class="progress-log hidden"></div>
+
+<div id="slack-digest-section" class="card hidden">
+    <div class="digest-header">
+        <h2 id="slack-digest-title">📊 频道讨论摘要</h2>
+        <button class="btn btn-sm btn-feishu hidden" id="btn-feishu-push-slack" title="推送到飞书">🐦 推送到飞书</button>
+        <button class="btn btn-sm btn-slack hidden" id="btn-slack-push-slack" title="推送到 Slack">💬 推送到 Slack</button>
+    </div>
+    <div id="slack-digest-content" class="digest-content"></div>
+</div>
+
+<div id="slack-messages-section" class="hidden">
+    <div class="card">
+        <h3>💬 消息列表 <span class="ds-tab-count" id="slack-msg-count">0</span></h3>
+        <div id="slack-msg-list"></div>
+    </div>
+</div>
+
+<div id="history-section" class="card">
+    <h2 class="history-toggle" id="history-toggle">📜 历史摘要 <span class="toggle-icon">▶</span></h2>
+    <div id="history-list" class="history-list hidden"></div>
+    <div id="history-content" class="history-content hidden">
+        <div class="history-actions">
+            <button class="btn btn-sm btn-secondary" id="history-back">← 返回列表</button>
+            <button class="btn btn-sm btn-feishu hidden" id="btn-feishu-push-history" title="推送到飞书">🐦 推送到飞书</button>
+            <button class="btn btn-sm btn-slack hidden" id="btn-slack-push-history" title="推送到 Slack">💬 推送到
+                Slack</button>
+        </div>
+        <div id="history-detail" class="digest-content"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/slack.js"></script>
 {% endblock %}

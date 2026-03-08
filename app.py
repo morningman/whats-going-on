@@ -150,6 +150,12 @@ def _mask_tokens(config: dict) -> dict:
         safe["slack"]["user_token"] = slack_token[:8] + "..." + slack_token[-4:]
     elif slack_token:
         safe.setdefault("slack", {})["user_token"] = "***"
+    # Mask Slack push webhook URL
+    slack_push_url = safe.get("slack", {}).get("push_webhook_url", "")
+    if slack_push_url and len(slack_push_url) > 20:
+        safe.setdefault("slack", {})["push_webhook_url"] = slack_push_url[:40] + "..." + slack_push_url[-6:]
+    elif slack_push_url:
+        safe.setdefault("slack", {})["push_webhook_url"] = "***"
     # Mask Feishu webhook URL (contains secret token)
     feishu_url = safe.get("feishu", {}).get("webhook_url", "")
     if feishu_url and len(feishu_url) > 20:
@@ -204,6 +210,10 @@ def _restore_masked_tokens(new_config: dict) -> dict:
     slack_token = new_slack.get("user_token", "")
     if slack_token and ("..." in slack_token or slack_token == "***"):
         new_slack["user_token"] = old_slack.get("user_token", "")
+    # Restore masked Slack push webhook URL
+    slack_push_url = new_slack.get("push_webhook_url", "")
+    if slack_push_url and ("..." in slack_push_url or slack_push_url == "***"):
+        new_slack["push_webhook_url"] = old_slack.get("push_webhook_url", "")
 
     # Restore masked Feishu webhook URL
     old_feishu = old_config.get("feishu", {})
@@ -1029,36 +1039,91 @@ def api_github_digest_stream():
 
     def worker():
         try:
-            # Try GitHub activity cache first
-            cached_activity = cache.load_github_cache(repo_id, today, days)
-            if cached_activity is not None:
-                activity = cached_activity
-                q.put({"type": "progress", "message": f"[缓存命中] 使用缓存的活动数据"})
+            # Compute the full list of dates for this request
+            if start_date and end_date:
+                sd = datetime.strptime(start_date, "%Y-%m-%d")
+                ed = datetime.strptime(end_date, "%Y-%m-%d")
             else:
-                # Fetch activity from GitHub API (with progress)
+                ed = datetime.now()
+                sd = ed - timedelta(days=days - 1)
+            date_list = []
+            cur = sd
+            while cur <= ed:
+                date_list.append(cur.strftime("%Y-%m-%d"))
+                cur += timedelta(days=1)
+
+            # Check per-day cache
+            cached_data, missing_dates = cache.load_github_cache_range(repo_id, date_list)
+            if cached_data and not missing_dates:
+                q.put({"type": "progress", "message": f"[缓存命中] 全部 {len(cached_data)} 天数据来自缓存"})
+            elif cached_data:
+                q.put({"type": "progress", "message": f"[部分缓存] 命中 {len(cached_data)} 天，需获取 {len(missing_dates)} 天"})
+
+            # Fetch missing days from GitHub API
+            fetched_activity = None
+            if missing_dates:
                 from sources.github import GitHubSource
                 gh = GitHubSource()
                 token = gh_config.get("token", "")
-                activity = gh.fetch_activity(
-                    repo["owner"], repo["repo"], days=days, token=token,
+                fetch_since = min(missing_dates)
+                fetch_until = max(missing_dates)
+                fetched_activity = gh.fetch_activity(
+                    repo["owner"], repo["repo"], days=len(missing_dates), token=token,
                     progress_cb=progress_cb,
-                    since_date=since_date,
+                    since_date=fetch_since,
+                    until_date=fetch_until,
                 )
-                cache.save_github_cache(repo_id, today, days, activity)
+                # Save fetched data per-day (skips today automatically)
+                cache.save_github_cache_days(repo_id, fetched_activity)
+
+            # Merge cached + fetched data into a single activity dict
+            all_pulls = []
+            all_issues = []
+            for date, day_data in cached_data.items():
+                all_pulls.extend(day_data.get("pulls", []))
+                all_issues.extend(day_data.get("issues", []))
+            if fetched_activity:
+                all_pulls.extend(fetched_activity.get("pulls", []))
+                all_issues.extend(fetched_activity.get("issues", []))
+
+            # Deduplicate by number (in case of overlap between cached and fetched)
+            seen_pr = set()
+            deduped_pulls = []
+            for pr in all_pulls:
+                if pr["number"] not in seen_pr:
+                    seen_pr.add(pr["number"])
+                    deduped_pulls.append(pr)
+            seen_issue = set()
+            deduped_issues = []
+            for issue in all_issues:
+                if issue["number"] not in seen_issue:
+                    seen_issue.add(issue["number"])
+                    deduped_issues.append(issue)
+
+            # Build merged activity with fresh stats
+            activity = {
+                "pulls": deduped_pulls,
+                "issues": deduped_issues,
+                "stats": {
+                    "total_prs": len(deduped_pulls),
+                    "merged_prs": sum(1 for p in deduped_pulls if p.get("merged")),
+                    "open_prs": sum(1 for p in deduped_pulls if p.get("state") == "open"),
+                    "closed_prs": sum(1 for p in deduped_pulls if p.get("state") == "closed" and not p.get("merged")),
+                    "total_issues": len(deduped_issues),
+                    "open_issues": sum(1 for i in deduped_issues if i.get("state") == "open"),
+                    "closed_issues": sum(1 for i in deduped_issues if i.get("state") == "closed"),
+                },
+                "repo": f"{repo['owner']}/{repo['repo']}",
+                "days": days,
+            }
 
             # Emit activity data so frontend can render it immediately
             q.put({"type": "activity_loaded", "data": activity})
 
-            # Then generate digest (always fresh, no cache)
+            # Then generate digest
             llm_config = config.get("llm", {})
             # Compute date range label for LLM prompt
-            if start_date and end_date:
-                digest_date_range = f"{start_date} ~ {end_date}"
-            else:
-                from datetime import timedelta as _td
-                _end = datetime.now()
-                _start = _end - _td(days=days - 1)
-                digest_date_range = f"{_start.strftime('%Y-%m-%d')} ~ {_end.strftime('%Y-%m-%d')}"
+            digest_date_range = f"{date_list[0]} ~ {date_list[-1]}"
             digest = summarizer.generate_github_digest(
                 activity, repo_id, f"{repo['owner']}/{repo['repo']}",
                 days, llm_config, cache_key,
@@ -1203,26 +1268,347 @@ def api_feishu_push():
         return jsonify({"ok": False, "message": f"推送失败: {str(e)}"})
 
 
-# --- Slack API (stub — Coming Soon) ---
+# --- Slack Push API ---
+
+
+def _markdown_to_slack_blocks(md_text: str, title: str = "") -> list[dict]:
+    """Convert Markdown text to Slack Block Kit blocks.
+
+    Uses Header block for the title, Section blocks (mrkdwn) for content,
+    and Divider blocks for visual separation.
+    Each section block has a 3000 char limit, so we split as needed.
+    """
+    blocks = []
+
+    # Header block
+    if title:
+        blocks.append({
+            "type": "header",
+            "text": {"type": "plain_text", "text": title[:150], "emoji": True},
+        })
+        blocks.append({"type": "divider"})
+
+    # Convert Markdown formatting to Slack mrkdwn
+    text = md_text.strip()
+
+    # Convert markdown links [text](url) → <url|text>
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<\2|\1>', text)
+    # Convert headings to bold (Slack doesn't support headings)
+    text = re.sub(r'^#{1,6}\s+(.+)$', r'\n*\1*', text, flags=re.MULTILINE)
+    # Convert bold **text** → *text*
+    text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+    # Convert strikethrough ~~text~~ → ~text~
+    text = re.sub(r'~~(.+?)~~', r'~\1~', text)
+    # Convert horizontal rules
+    text = re.sub(r'^---+$', '───────────────────', text, flags=re.MULTILINE)
+
+    # Split into chunks of ~2900 chars (Slack limit is 3000 per section block)
+    max_chunk = 2900
+    lines = text.split('\n')
+    current_chunk = ""
+
+    for line in lines:
+        # If adding this line would exceed the limit, flush current chunk
+        if len(current_chunk) + len(line) + 1 > max_chunk and current_chunk:
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": current_chunk.strip()},
+            })
+            current_chunk = ""
+
+        current_chunk += line + "\n"
+
+    # Flush remaining
+    if current_chunk.strip():
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": current_chunk.strip()},
+        })
+
+    return blocks
+
+
+@app.route("/api/slack/push", methods=["POST"])
+def api_slack_push():
+    """Push AI summary content to a Slack channel via Incoming Webhook."""
+    config = load_config()
+    webhook_url = config.get("slack", {}).get("push_webhook_url", "")
+    if not webhook_url:
+        logger.warning("POST /api/slack/push — no webhook URL configured")
+        return jsonify({"ok": False, "message": "Slack Webhook URL 未配置。请在设置页面填写。"}), 400
+
+    data = request.get_json()
+    if not data or not data.get("content"):
+        logger.warning("POST /api/slack/push — missing content")
+        return jsonify({"ok": False, "message": "推送内容不能为空"}), 400
+
+    content = data["content"]
+    title = data.get("title", "📊 AI 摘要推送")
+    logger.info("POST /api/slack/push — pushing to Slack, title=%s, content_len=%d", title, len(content))
+
+    try:
+        blocks = _markdown_to_slack_blocks(content, title)
+        payload = {"blocks": blocks}
+        resp = http_requests.post(
+            webhook_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
+        # Slack webhook returns "ok" as plain text on success
+        if resp.status_code == 200 and resp.text == "ok":
+            logger.info("POST /api/slack/push — success")
+            return jsonify({"ok": True, "message": "推送成功！摘要已发送到 Slack 频道。"})
+        else:
+            msg = resp.text or f"HTTP {resp.status_code}"
+            logger.warning("POST /api/slack/push — Slack returned error: %s", msg)
+            return jsonify({"ok": False, "message": f"Slack 返回错误: {msg}"})
+    except http_requests.exceptions.Timeout:
+        logger.error("POST /api/slack/push — request timeout")
+        return jsonify({"ok": False, "message": "请求 Slack 超时，请检查网络连接"})
+    except Exception as e:
+        logger.exception("POST /api/slack/push — error")
+        return jsonify({"ok": False, "message": f"推送失败: {str(e)}"})
+
+
+# --- Slack API ---
 
 @app.route("/api/slack/status")
 def api_slack_status():
-    return jsonify({"connected": False, "message": "Slack integration coming soon"}), 501
+    """Return Slack workspace connection status."""
+    config = load_config()
+    workspaces = config.get("slack", {}).get("workspaces", [])
+    result = []
+    for ws in workspaces:
+        result.append({
+            "id": ws["id"],
+            "name": ws.get("name", ws["id"]),
+            "connected": bool(ws.get("token", "")),
+            "channels_count": len(ws.get("channels", [])),
+        })
+    return jsonify({"workspaces": result})
 
 
 @app.route("/api/slack/channels")
 def api_slack_channels():
-    return jsonify({"error": "Slack integration coming soon"}), 501
+    """Return configured workspaces and their channels."""
+    config = load_config()
+    workspaces = config.get("slack", {}).get("workspaces", [])
+    result = []
+    for ws in workspaces:
+        result.append({
+            "id": ws["id"],
+            "name": ws.get("name", ws["id"]),
+            "connected": bool(ws.get("token", "")),
+            "channels": ws.get("channels", []),
+        })
+    return jsonify(result)
 
 
-@app.route("/api/slack/messages")
-def api_slack_messages():
-    return jsonify({"error": "Slack integration coming soon"}), 501
+@app.route("/api/slack/channels/fetch")
+def api_slack_channels_fetch():
+    """Fetch available channels from Slack API for a workspace."""
+    workspace_id = request.args.get("workspace_id", "")
+    if not workspace_id:
+        return jsonify({"error": "workspace_id is required"}), 400
+
+    config = load_config()
+    workspaces = config.get("slack", {}).get("workspaces", [])
+    ws = None
+    for w in workspaces:
+        if w["id"] == workspace_id:
+            ws = w
+            break
+    if not ws:
+        return jsonify({"error": f"Workspace '{workspace_id}' not found"}), 404
+
+    token = ws.get("token", "")
+    if not token:
+        return jsonify({"error": "Slack token not configured for this workspace"}), 400
+
+    try:
+        from sources.slack import SlackSource
+        slack = SlackSource()
+        channels = slack.fetch_channels(token)
+        return jsonify(channels)
+    except Exception as e:
+        logger.exception("GET /api/slack/channels/fetch — error")
+        return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/slack/digest", methods=["POST"])
-def api_slack_digest():
-    return jsonify({"error": "Slack integration coming soon"}), 501
+@app.route("/api/slack/digest/stream")
+def api_slack_digest_stream():
+    """SSE endpoint: stream progress while fetching Slack messages and generating digest."""
+    workspace_id = request.args.get("workspace_id", "")
+    channel_id = request.args.get("channel_id", "")
+    start_date = request.args.get("start_date", "")
+    end_date = request.args.get("end_date", "")
+    try:
+        days = int(request.args.get("days", "3"))
+    except ValueError:
+        days = 3
+    if not start_date and days not in (1, 3, 7):
+        days = 3
+    lang = request.args.get("lang", "zh")
+    if lang not in ("zh", "en"):
+        lang = "zh"
+
+    if not workspace_id or not channel_id:
+        def err_gen():
+            yield _sse_event({"type": "error", "message": "workspace_id and channel_id are required"})
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    config = load_config()
+    workspaces = config.get("slack", {}).get("workspaces", [])
+    ws = None
+    for w in workspaces:
+        if w["id"] == workspace_id:
+            ws = w
+            break
+    if not ws:
+        def err_gen():
+            yield _sse_event({"type": "error", "message": f"Workspace '{workspace_id}' not found"})
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    token = ws.get("token", "")
+    if not token:
+        def err_gen():
+            yield _sse_event({"type": "error", "message": "Slack token not configured"})
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    # Find channel name
+    channel_name = channel_id
+    for ch in ws.get("channels", []):
+        if ch["id"] == channel_id:
+            channel_name = ch.get("name", channel_id)
+            break
+
+    # Compute effective dates
+    since_date = None
+    if start_date and end_date:
+        try:
+            sd = datetime.strptime(start_date, "%Y-%m-%d")
+            ed = datetime.strptime(end_date, "%Y-%m-%d")
+            days = (ed - sd).days + 1
+            since_date = start_date
+        except ValueError:
+            pass
+
+    channel_key = f"{workspace_id}__{channel_id}"
+    today = datetime.now().strftime("%Y-%m-%d")
+    range_label = f"{start_date}__{end_date}" if start_date else f"{days}d"
+    cache_key = f"slack__{channel_key}__{today}__{range_label}"
+
+    logger.info("SSE /api/slack/digest/stream — ws=%s, channel=%s (%s), days=%d",
+                workspace_id, channel_id, channel_name, days)
+
+    q = queue.Queue()
+
+    def progress_cb(event_type, message, **kwargs):
+        event = {"type": event_type, "message": message}
+        event.update(kwargs)
+        q.put(event)
+
+    def worker():
+        try:
+            # Compute the full list of dates
+            if start_date and end_date:
+                sd = datetime.strptime(start_date, "%Y-%m-%d")
+                ed = datetime.strptime(end_date, "%Y-%m-%d")
+            else:
+                ed = datetime.now()
+                sd = ed - timedelta(days=days - 1)
+            date_list = []
+            cur = sd
+            while cur <= ed:
+                date_list.append(cur.strftime("%Y-%m-%d"))
+                cur += timedelta(days=1)
+
+            # Check per-day cache
+            cached_data, missing_dates = cache.load_slack_cache_range(channel_key, date_list)
+            if cached_data and not missing_dates:
+                q.put({"type": "progress", "message": f"[缓存命中] 全部 {len(cached_data)} 天数据来自缓存"})
+            elif cached_data:
+                q.put({"type": "progress", "message": f"[部分缓存] 命中 {len(cached_data)} 天，需获取 {len(missing_dates)} 天"})
+
+            # Fetch missing days from Slack API
+            fetched_messages = []
+            if missing_dates:
+                from sources.slack import SlackSource
+                slack = SlackSource()
+                fetch_since = min(missing_dates)
+                fetch_until = max(missing_dates)
+                fetched_messages = slack.fetch_messages(
+                    token, channel_id, days=len(missing_dates),
+                    progress_cb=progress_cb,
+                    since_date=fetch_since,
+                    until_date=fetch_until,
+                )
+                # Save fetched data per-day
+                cache.save_slack_cache_days(channel_key, fetched_messages)
+
+            # Merge cached + fetched
+            all_messages = []
+            for date, day_msgs in cached_data.items():
+                all_messages.extend(day_msgs)
+            all_messages.extend(fetched_messages)
+
+            # Deduplicate by ts
+            seen_ts = set()
+            deduped = []
+            for msg in all_messages:
+                if msg["ts"] not in seen_ts:
+                    seen_ts.add(msg["ts"])
+                    deduped.append(msg)
+            deduped.sort(key=lambda m: m["ts"])
+
+            # Build stats
+            stats = {
+                "total_messages": len(deduped),
+                "threaded_messages": sum(1 for m in deduped if m.get("thread_reply_count", 0) > 0),
+            }
+
+            # Emit messages data
+            q.put({"type": "messages_loaded", "data": {
+                "messages": deduped,
+                "stats": stats,
+                "channel": channel_name,
+                "days": days,
+            }})
+
+            # Generate digest
+            llm_config = config.get("llm", {})
+            digest_date_range = f"{date_list[0]} ~ {date_list[-1]}"
+            digest = summarizer.generate_slack_digest(
+                deduped, channel_key, channel_name,
+                days, llm_config, cache_key,
+                progress_cb=progress_cb,
+                force=True,
+                lang=lang,
+                date_range=digest_date_range,
+            )
+            q.put({"type": "done", "data": digest})
+        except Exception as e:
+            logger.exception("SSE /api/slack/digest/stream — error")
+            q.put({"type": "error", "message": str(e)})
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+
+    def generate():
+        while True:
+            try:
+                event = q.get(timeout=300)  # 5 min timeout
+            except queue.Empty:
+                yield _sse_event({"type": "error", "message": "操作超时 (5 分钟)"})
+                return
+            yield _sse_event(event)
+            if event["type"] in ("done", "error"):
+                return
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
 
 
 # --- Helpers ---

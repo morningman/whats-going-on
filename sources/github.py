@@ -64,7 +64,7 @@ class GitHubSource:
 
     def fetch_pull_requests(
         self, owner: str, repo: str, days: int = 3, token: str = "",
-        progress_cb=None, since_date: str = None,
+        progress_cb=None, since_date: str = None, until_date: str = None,
     ) -> list[dict]:
         """Fetch PRs updated within the last N days, targeting the default branch only."""
         if since_date:
@@ -113,6 +113,12 @@ class GitHubSource:
                     # PRs are sorted by updated desc, so we can stop
                     filtered = [p for p in prs if p.get("updated_at", "") >= since]
                     result = self._normalize_prs(all_prs + filtered)
+                    # Filter by until_date if provided (upper bound)
+                    if until_date:
+                        until_iso = datetime.strptime(until_date, "%Y-%m-%d").replace(
+                            hour=23, minute=59, second=59, tzinfo=timezone.utc
+                        ).isoformat()
+                        result = [p for p in result if p["updated_at"] <= until_iso]
                     if progress_cb:
                         progress_cb("progress", f"PR 数据获取完成，共 {len(result)} 条", step="fetch_prs_done")
                     return result
@@ -124,6 +130,12 @@ class GitHubSource:
             page += 1
 
         result = self._normalize_prs(all_prs)
+        # Filter by until_date if provided (upper bound)
+        if until_date:
+            until_iso = datetime.strptime(until_date, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            ).isoformat()
+            result = [p for p in result if p["updated_at"] <= until_iso]
         if progress_cb:
             progress_cb("progress", f"PR 数据获取完成，共 {len(result)} 条", step="fetch_prs_done")
         return result
@@ -148,7 +160,7 @@ class GitHubSource:
 
     def fetch_issues(
         self, owner: str, repo: str, days: int = 3, token: str = "",
-        progress_cb=None, since_date: str = None,
+        progress_cb=None, since_date: str = None, until_date: str = None,
     ) -> list[dict]:
         """Fetch issues (excluding PRs) updated within the last N days."""
         if since_date:
@@ -197,6 +209,12 @@ class GitHubSource:
             page += 1
 
         result = self._normalize_issues(all_issues)
+        # Filter by until_date if provided (upper bound)
+        if until_date:
+            until_iso = datetime.strptime(until_date, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            ).isoformat()
+            result = [i for i in result if i["updated_at"] <= until_iso]
         if progress_cb:
             progress_cb("progress", f"Issue 数据获取完成，共 {len(result)} 条", step="fetch_issues_done")
         return result
@@ -220,7 +238,7 @@ class GitHubSource:
 
     def fetch_activity(
         self, owner: str, repo: str, days: int = 3, token: str = "",
-        progress_cb=None, since_date: str = None,
+        progress_cb=None, since_date: str = None, until_date: str = None,
     ) -> dict:
         """Fetch combined PR + Issue activity for a repo."""
         logger.info("Fetching activity for %s/%s (last %d days, since_date=%s)", owner, repo, days, since_date)
@@ -233,8 +251,8 @@ class GitHubSource:
             else:
                 progress_cb("progress", f"开始获取 {owner}/{repo} 最近 {days} 天的活动数据...", step="start")
 
-        prs = self.fetch_pull_requests(owner, repo, days, token, progress_cb=progress_cb, since_date=since_date)
-        issues = self.fetch_issues(owner, repo, days, token, progress_cb=progress_cb, since_date=since_date)
+        prs = self.fetch_pull_requests(owner, repo, days, token, progress_cb=progress_cb, since_date=since_date, until_date=until_date)
+        issues = self.fetch_issues(owner, repo, days, token, progress_cb=progress_cb, since_date=since_date, until_date=until_date)
 
         stats = {
             "total_prs": len(prs),

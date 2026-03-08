@@ -440,6 +440,31 @@ header nav a.active {
   box-shadow: none;
 }
 
+/* Slack push button */
+.btn-slack {
+  background: linear-gradient(135deg, #611f69 0%, #4a154b 100%);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 6px rgba(97, 31, 105, 0.25);
+  white-space: nowrap;
+}
+
+.btn-slack:hover {
+  background: linear-gradient(135deg, #4a154b 0%, #3b1040 100%);
+  box-shadow: 0 3px 10px rgba(97, 31, 105, 0.35);
+  transform: translateY(-1px);
+}
+
+.btn-slack:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
 /* Digest header — flex row for title + push button */
 .digest-header {
   display: flex;
@@ -1190,4 +1215,35 @@ kbd {
 
 #history-back {
   margin-bottom: 12px;
+}
+
+/* Slack message styles */
+.slack-msg-text {
+  padding: 6px 0;
+  color: #4a5568;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.slack-thread-replies {
+  margin: 6px 0 6px 20px;
+  padding-left: 12px;
+  border-left: 2px solid #e2e8f0;
+}
+
+.slack-reply {
+  padding: 4px 0;
+  font-size: 0.85rem;
+  color: #718096;
+}
+
+.slack-reply-user {
+  font-weight: 600;
+  color: #4a5568;
+  margin-right: 6px;
+}
+
+.slack-reply-text {
+  word-break: break-word;
 }

@@ -72,10 +72,15 @@
     "webhook_url": ""
   },
   "slack": {
-    "client_id": "",
-    "client_secret": "",
-    "user_token": "",
-    "channels": []
+    "push_webhook_url": "",
+    "workspaces": [
+      {
+        "id": "my-team",
+        "name": "My Team",
+        "token": "",
+        "channels": []
+      }
+    ]
   },
   "fetch_days": 7
 }

@@ -206,7 +206,7 @@ function runCombinedFlow() {
       }
       renderDigest(event.data, dateRangeLabel);
       lastEmailSummary = event.data.summary || '';
-      showFeishuButton();
+      showPushButtons();
       showEmailStatus('加载完成，摘要已生成！', 'success');
       resetButton();
     }
@@ -340,8 +340,10 @@ async function viewHistorySummary(filename) {
   historyList.classList.add('hidden');
   historyContent.classList.remove('hidden');
   historyDetail.innerHTML = '<p style="color:#718096;">加载中...</p>';
-  const btnHistoryPush = document.getElementById('btn-feishu-push-history');
-  if (btnHistoryPush) btnHistoryPush.classList.add('hidden');
+  const btnHistoryFeishu = document.getElementById('btn-feishu-push-history');
+  const btnHistorySlack = document.getElementById('btn-slack-push-history');
+  if (btnHistoryFeishu) btnHistoryFeishu.classList.add('hidden');
+  if (btnHistorySlack) btnHistorySlack.classList.add('hidden');
   lastHistorySummary = null;
   try {
     const resp = await fetch(`/api/summaries/${encodeURIComponent(filename)}`);
@@ -358,7 +360,8 @@ async function viewHistorySummary(filename) {
     }
     historyDetail.innerHTML = renderMarkdown(content);
     lastHistorySummary = content;
-    if (btnHistoryPush) btnHistoryPush.classList.remove('hidden');
+    if (btnHistoryFeishu) btnHistoryFeishu.classList.remove('hidden');
+    if (btnHistorySlack) btnHistorySlack.classList.remove('hidden');
   } catch (e) {
     historyDetail.innerHTML = '<p style="color:#e53e3e;">加载失败: ' + escapeHtml(e.message) + '</p>';
   }
@@ -367,9 +370,11 @@ async function viewHistorySummary(filename) {
 // --- Feishu Push ---
 
 const btnFeishuPush = document.getElementById('btn-feishu-push-email');
+const btnSlackPush = document.getElementById('btn-slack-push-email');
 
-function showFeishuButton() {
+function showPushButtons() {
   if (btnFeishuPush) btnFeishuPush.classList.remove('hidden');
+  if (btnSlackPush) btnSlackPush.classList.remove('hidden');
 }
 
 if (btnFeishuPush) {
@@ -422,6 +427,62 @@ if (btnFeishuPushHistory) {
     } finally {
       btnFeishuPushHistory.disabled = false;
       btnFeishuPushHistory.textContent = '🐦 推送到飞书';
+    }
+  });
+}
+
+// --- Slack Push ---
+
+if (btnSlackPush) {
+  btnSlackPush.addEventListener('click', async function () {
+    if (!lastEmailSummary) {
+      showEmailStatus('没有可推送的摘要内容', 'error');
+      return;
+    }
+    const listName = listSelect.options[listSelect.selectedIndex]?.textContent || '邮件摘要';
+    btnSlackPush.disabled = true;
+    btnSlackPush.innerHTML = '<span class="spinner"></span>推送中...';
+    try {
+      const resp = await fetch('/api/slack/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: lastEmailSummary, title: `📧 ${listName}` }),
+      });
+      const result = await resp.json();
+      showEmailStatus(result.message, result.ok ? 'success' : 'error');
+    } catch (e) {
+      showEmailStatus('推送失败: ' + e.message, 'error');
+    } finally {
+      btnSlackPush.disabled = false;
+      btnSlackPush.textContent = '💬 推送到 Slack';
+    }
+  });
+}
+
+// --- Slack Push (history) ---
+
+const btnSlackPushHistory = document.getElementById('btn-slack-push-history');
+if (btnSlackPushHistory) {
+  btnSlackPushHistory.addEventListener('click', async function () {
+    if (!lastHistorySummary) {
+      showEmailStatus('没有可推送的摘要内容', 'error');
+      return;
+    }
+    btnSlackPushHistory.disabled = true;
+    btnSlackPushHistory.innerHTML = '<span class="spinner"></span>推送中...';
+    try {
+      const resp = await fetch('/api/slack/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: lastHistorySummary, title: '📧 历史邮件摘要' }),
+      });
+      const result = await resp.json();
+      showEmailStatus(result.message, result.ok ? 'success' : 'error');
+    } catch (e) {
+      showEmailStatus('推送失败: ' + e.message, 'error');
+    } finally {
+      btnSlackPushHistory.disabled = false;
+      btnSlackPushHistory.textContent = '💬 推送到 Slack';
     }
   });
 }

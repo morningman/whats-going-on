@@ -197,7 +197,7 @@ function runCombinedFlow() {
             }
             renderDigest(event.data, dateRangeLabel);
             lastGhSummary = event.data.summary || '';
-            showFeishuButton();
+            showPushButtons();
             showGhStatus('加载完成，摘要已生成！', 'success');
             resetButton();
         }
@@ -408,8 +408,10 @@ async function viewHistorySummary(filename) {
     historyList.classList.add('hidden');
     historyContent.classList.remove('hidden');
     historyDetail.innerHTML = '<p style="color:#718096;">加载中...</p>';
-    const btnHistoryPush = document.getElementById('btn-feishu-push-history');
-    if (btnHistoryPush) btnHistoryPush.classList.add('hidden');
+    const btnHistoryFeishu = document.getElementById('btn-feishu-push-history');
+    const btnHistorySlack = document.getElementById('btn-slack-push-history');
+    if (btnHistoryFeishu) btnHistoryFeishu.classList.add('hidden');
+    if (btnHistorySlack) btnHistorySlack.classList.add('hidden');
     lastHistorySummary = null;
     try {
         const resp = await fetch(`/api/summaries/${encodeURIComponent(filename)}`);
@@ -426,7 +428,8 @@ async function viewHistorySummary(filename) {
         }
         historyDetail.innerHTML = renderMarkdown(content);
         lastHistorySummary = content;
-        if (btnHistoryPush) btnHistoryPush.classList.remove('hidden');
+        if (btnHistoryFeishu) btnHistoryFeishu.classList.remove('hidden');
+        if (btnHistorySlack) btnHistorySlack.classList.remove('hidden');
     } catch (e) {
         historyDetail.innerHTML = '<p style="color:#e53e3e;">加载失败: ' + escapeHtml(e.message) + '</p>';
     }
@@ -435,9 +438,11 @@ async function viewHistorySummary(filename) {
 // --- Feishu Push ---
 
 const btnFeishuPushGh = document.getElementById('btn-feishu-push-gh');
+const btnSlackPushGh = document.getElementById('btn-slack-push-gh');
 
-function showFeishuButton() {
+function showPushButtons() {
     if (btnFeishuPushGh) btnFeishuPushGh.classList.remove('hidden');
+    if (btnSlackPushGh) btnSlackPushGh.classList.remove('hidden');
 }
 
 if (btnFeishuPushGh) {
@@ -490,6 +495,62 @@ if (btnFeishuPushHistory) {
         } finally {
             btnFeishuPushHistory.disabled = false;
             btnFeishuPushHistory.textContent = '🐦 推送到飞书';
+        }
+    });
+}
+
+// --- Slack Push ---
+
+if (btnSlackPushGh) {
+    btnSlackPushGh.addEventListener('click', async function () {
+        if (!lastGhSummary) {
+            showGhStatus('没有可推送的摘要内容', 'error');
+            return;
+        }
+        const repoName = repoSelect.options[repoSelect.selectedIndex]?.textContent || 'GitHub 摘要';
+        btnSlackPushGh.disabled = true;
+        btnSlackPushGh.innerHTML = '<span class="spinner"></span>推送中...';
+        try {
+            const resp = await fetch('/api/slack/push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: lastGhSummary, title: `🐙 ${repoName}` }),
+            });
+            const result = await resp.json();
+            showGhStatus(result.message, result.ok ? 'success' : 'error');
+        } catch (e) {
+            showGhStatus('推送失败: ' + e.message, 'error');
+        } finally {
+            btnSlackPushGh.disabled = false;
+            btnSlackPushGh.textContent = '💬 推送到 Slack';
+        }
+    });
+}
+
+// --- Slack Push (history) ---
+
+const btnSlackPushHistory = document.getElementById('btn-slack-push-history');
+if (btnSlackPushHistory) {
+    btnSlackPushHistory.addEventListener('click', async function () {
+        if (!lastHistorySummary) {
+            showGhStatus('没有可推送的摘要内容', 'error');
+            return;
+        }
+        btnSlackPushHistory.disabled = true;
+        btnSlackPushHistory.innerHTML = '<span class="spinner"></span>推送中...';
+        try {
+            const resp = await fetch('/api/slack/push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: lastHistorySummary, title: '🐙 历史 GitHub 摘要' }),
+            });
+            const result = await resp.json();
+            showGhStatus(result.message, result.ok ? 'success' : 'error');
+        } catch (e) {
+            showGhStatus('推送失败: ' + e.message, 'error');
+        } finally {
+            btnSlackPushHistory.disabled = false;
+            btnSlackPushHistory.textContent = '💬 推送到 Slack';
         }
     });
 }

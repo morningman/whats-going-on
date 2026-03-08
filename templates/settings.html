@@ -182,14 +182,40 @@
   </div>
 </div>
 
-<!-- Slack (Coming Soon) -->
+<!-- Slack 推送 -->
 <div class="card">
-  <h2>💬 Slack</h2>
-  <div class="coming-soon-inline">
-    <span class="coming-soon-badge">🚧 Coming Soon</span>
-    <p style="color:#718096; font-size:0.9rem; margin-top:8px;">
-      Slack 集成功能将在下一版本推出。届时可在此配置 OAuth 凭据和监控频道。
-    </p>
+  <h2>💬 Slack 推送</h2>
+  <p style="color:#718096; font-size:0.9rem; margin-bottom:12px;">
+    配置 Slack Incoming Webhook URL，用于将 AI 摘要推送到 Slack 频道。
+    <a href="https://api.slack.com/messaging/webhooks" target="_blank" rel="noopener" style="color:#4299e1;">如何创建？</a>
+  </p>
+  <div class="form-group">
+    <label for="slack-push-webhook">Webhook URL</label>
+    <input type="text" id="slack-push-webhook" placeholder="https://hooks.slack.com/services/T.../B.../...">
+  </div>
+</div>
+
+<!-- Slack Workspaces -->
+<div class="card">
+  <h2>💬 Slack Workspaces</h2>
+  <p style="color:#718096; font-size:0.9rem; margin-bottom:12px;">
+    Configure Slack workspaces to monitor channel discussions.
+    You need a <a href="https://api.slack.com/apps" target="_blank" rel="noopener" style="color:#4299e1;">Slack App</a>
+    User Token (<code>xoxp-...</code>) with scopes: <code>channels:history</code>, <code>channels:read</code>.
+  </p>
+  <div id="slack-workspaces-container"></div>
+
+  <h3 style="margin-top:16px; font-size:1rem;">Add New Workspace</h3>
+  <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
+    <div class="form-group" style="flex:1; min-width:150px; margin-bottom:0;">
+      <label for="new-slack-name">Display Name</label>
+      <input type="text" id="new-slack-name" placeholder="My Team">
+    </div>
+    <div class="form-group" style="flex:2; min-width:200px; margin-bottom:0;">
+      <label for="new-slack-token">User Token</label>
+      <input type="password" id="new-slack-token" placeholder="xoxp-...">
+    </div>
+    <button class="btn btn-primary" id="btn-add-slack-ws" style="height:38px;">Add Workspace</button>
   </div>
 </div>
 

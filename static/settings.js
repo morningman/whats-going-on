@@ -452,6 +452,222 @@ document.getElementById('btn-add-gh-repo').addEventListener('click', () => {
   showStatus('Repo added. Click "Save All Settings" to persist.', 'info');
 });
 
+// --- Slack Workspace Management ---
+
+const slackWsContainer = document.getElementById('slack-workspaces-container');
+
+function showChannelPicker(parentDiv, allChannels, existingIds, wsIdx) {
+  // Remove any existing picker
+  const oldPicker = parentDiv.querySelector('.channel-picker');
+  if (oldPicker) oldPicker.remove();
+
+  const picker = document.createElement('div');
+  picker.className = 'channel-picker';
+  picker.style.cssText = 'margin-top:12px;padding:12px;border:1px solid #3182ce;border-radius:8px;background:#f7fafc;';
+
+  // Sort: new channels first, then already-added
+  const sorted = [...allChannels].sort((a, b) => {
+    const aEx = existingIds.has(a.id) ? 1 : 0;
+    const bEx = existingIds.has(b.id) ? 1 : 0;
+    if (aEx !== bEx) return aEx - bEx;
+    return a.name.localeCompare(b.name);
+  });
+
+  const newCount = sorted.filter(ch => !existingIds.has(ch.id)).length;
+
+  picker.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <strong style="font-size:0.95rem;">Select Channels (${allChannels.length} found, ${newCount} new)</strong>
+      <button class="btn btn-sm btn-secondary picker-close" style="padding:2px 8px;">✕</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
+      <input type="text" class="picker-search" placeholder="Search channels..." style="flex:1;padding:6px 10px;border:1px solid #cbd5e0;border-radius:6px;font-size:0.9rem;">
+      <button class="btn btn-sm btn-secondary picker-select-all">Select All</button>
+      <button class="btn btn-sm btn-secondary picker-select-none">Select None</button>
+    </div>
+    <div class="picker-list" style="max-height:300px;overflow-y:auto;margin-bottom:8px;">
+      ${sorted.map(ch => {
+    const isExisting = existingIds.has(ch.id);
+    const memberInfo = ch.num_members ? ` · ${ch.num_members} members` : '';
+    const topicInfo = ch.topic ? ` · ${escapeHtml(ch.topic).substring(0, 60)}` : '';
+    return `
+          <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;${isExisting ? 'opacity:0.5;' : ''}" class="picker-label" data-name="${escapeHtml(ch.name)}">
+            <input type="checkbox" value="${escapeHtml(ch.id)}" data-name="${escapeHtml(ch.name)}" ${isExisting ? 'checked disabled' : ''} style="width:16px;height:16px;accent-color:#3182ce;">
+            <span style="font-weight:500;">#${escapeHtml(ch.name)}</span>
+            <span style="font-size:0.8rem;color:#718096;">${isExisting ? '(已添加)' : ''}${memberInfo}${topicInfo}</span>
+          </label>`;
+  }).join('')}
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-secondary btn-sm picker-cancel">Cancel</button>
+      <button class="btn btn-primary btn-sm picker-confirm">Add Selected</button>
+    </div>
+  `;
+
+  parentDiv.appendChild(picker);
+
+  // Search filter
+  const searchInput = picker.querySelector('.picker-search');
+  searchInput.addEventListener('input', () => {
+    const q = searchInput.value.toLowerCase();
+    picker.querySelectorAll('.picker-label').forEach(label => {
+      const name = label.dataset.name.toLowerCase();
+      label.style.display = name.includes(q) ? 'flex' : 'none';
+    });
+  });
+
+  // Select all (only new, visible ones)
+  picker.querySelector('.picker-select-all').addEventListener('click', () => {
+    picker.querySelectorAll('.picker-label').forEach(label => {
+      if (label.style.display === 'none') return;
+      const cb = label.querySelector('input[type="checkbox"]');
+      if (!cb.disabled) cb.checked = true;
+    });
+  });
+
+  // Select none
+  picker.querySelector('.picker-select-none').addEventListener('click', () => {
+    picker.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      if (!cb.disabled) cb.checked = false;
+    });
+  });
+
+  // Cancel / Close
+  const closePicker = () => picker.remove();
+  picker.querySelector('.picker-cancel').addEventListener('click', closePicker);
+  picker.querySelector('.picker-close').addEventListener('click', closePicker);
+
+  // Confirm
+  picker.querySelector('.picker-confirm').addEventListener('click', () => {
+    const ws = currentConfig.slack.workspaces[wsIdx];
+    if (!ws.channels) ws.channels = [];
+    let added = 0;
+    picker.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)').forEach(cb => {
+      ws.channels.push({ id: cb.value, name: cb.dataset.name });
+      added++;
+    });
+    picker.remove();
+    if (added > 0) {
+      renderSlackWorkspaces();
+      showStatus(`Added ${added} channel(s). Click "Save All Settings" to persist.`, 'info');
+    }
+  });
+
+  // Focus search
+  searchInput.focus();
+}
+
+
+function renderSlackWorkspaces() {
+  if (!slackWsContainer) return;
+  slackWsContainer.innerHTML = '';
+  const workspaces = currentConfig?.slack?.workspaces || [];
+  if (workspaces.length === 0) {
+    slackWsContainer.innerHTML = '<p style="color:#718096;">No Slack workspaces configured.</p>';
+    return;
+  }
+  workspaces.forEach((ws, wsIdx) => {
+    const div = document.createElement('div');
+    div.className = 'list-item';
+    div.style.flexDirection = 'column';
+    div.style.alignItems = 'stretch';
+
+    const tokenStatus = ws.token ? '✅ Token configured' : '⚠️ No token';
+    const channelCount = (ws.channels || []).length;
+
+    let channelsHtml = '';
+    if (ws.channels && ws.channels.length > 0) {
+      channelsHtml = '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #e2e8f0;">' +
+        '<div style="font-size:0.85rem;color:#718096;margin-bottom:4px;">Channels:</div>' +
+        ws.channels.map((ch, chIdx) =>
+          `<span style="display:inline-flex;align-items:center;gap:4px;background:#ebf4ff;color:#2b6cb0;padding:2px 8px;border-radius:12px;font-size:0.82rem;margin:2px 4px 2px 0;">` +
+          `#${escapeHtml(ch.name)} ` +
+          `<button onclick="removeSlackChannel(${wsIdx},${chIdx})" style="background:none;border:none;color:#c53030;cursor:pointer;font-size:0.8rem;padding:0 2px;">✕</button>` +
+          `</span>`
+        ).join('') +
+        '</div>';
+    }
+
+    div.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div class="info">
+          <div class="name">${escapeHtml(ws.name)}</div>
+          <div class="detail">${tokenStatus} · ${channelCount} channels</div>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-secondary btn-sm" data-ws-idx="${wsIdx}" data-action="fetch-channels">📥 Fetch Channels</button>
+          <button class="btn btn-danger btn-sm" data-ws-idx="${wsIdx}" data-action="remove-ws">Remove</button>
+        </div>
+      </div>
+      ${channelsHtml}
+    `;
+
+    // Event delegation for buttons
+    div.querySelector('[data-action="remove-ws"]').addEventListener('click', () => {
+      currentConfig.slack.workspaces.splice(wsIdx, 1);
+      renderSlackWorkspaces();
+    });
+
+    div.querySelector('[data-action="fetch-channels"]').addEventListener('click', async (e) => {
+      const btn = e.target;
+      if (!ws.token) {
+        showStatus('Please configure a token for this workspace first.', 'error');
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = 'Fetching...';
+      try {
+        const resp = await fetch(`/api/slack/channels/fetch?workspace_id=${encodeURIComponent(ws.id)}`);
+        const data = await resp.json();
+        if (data.error) {
+          showStatus('Failed to fetch channels: ' + data.error, 'error');
+          return;
+        }
+        if (data.length === 0) {
+          showStatus('No channels found in this workspace.', 'info');
+          return;
+        }
+        // Show checkbox list panel
+        const existing = new Set((ws.channels || []).map(c => c.id));
+        showChannelPicker(div, data, existing, wsIdx);
+      } catch (e) {
+        showStatus('Failed to fetch channels: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '📥 Fetch Channels';
+      }
+    });
+
+    slackWsContainer.appendChild(div);
+  });
+}
+
+window.removeSlackChannel = function (wsIdx, chIdx) {
+  currentConfig.slack.workspaces[wsIdx].channels.splice(chIdx, 1);
+  renderSlackWorkspaces();
+};
+
+document.getElementById('btn-add-slack-ws').addEventListener('click', () => {
+  const name = document.getElementById('new-slack-name').value.trim();
+  const token = document.getElementById('new-slack-token').value.trim();
+  if (!name) {
+    showStatus('Please enter a workspace name.', 'error');
+    return;
+  }
+  const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '');
+  if (!currentConfig.slack) currentConfig.slack = { workspaces: [] };
+  if (!currentConfig.slack.workspaces) currentConfig.slack.workspaces = [];
+  if (currentConfig.slack.workspaces.some(w => w.id === id)) {
+    showStatus('A workspace with this ID already exists.', 'error');
+    return;
+  }
+  currentConfig.slack.workspaces.push({ id, name, token, channels: [] });
+  renderSlackWorkspaces();
+  document.getElementById('new-slack-name').value = '';
+  document.getElementById('new-slack-token').value = '';
+  showStatus('Workspace added. Click "Save All Settings" to persist.', 'info');
+});
+
 // --- Load & Save ---
 
 async function loadConfig() {
@@ -461,10 +677,13 @@ async function loadConfig() {
     renderProviders();
     renderLists();
     renderGithubRepos();
+    renderSlackWorkspaces();
     // Load GitHub token
     githubTokenInput.value = currentConfig?.github?.token || '';
     // Load Feishu webhook URL
     document.getElementById('feishu-webhook').value = currentConfig?.feishu?.webhook_url || '';
+    // Load Slack push webhook URL
+    document.getElementById('slack-push-webhook').value = currentConfig?.slack?.push_webhook_url || '';
   } catch (e) {
     showStatus('Failed to load config', 'error');
   }
@@ -495,6 +714,10 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   // Update Feishu webhook URL from input
   if (!currentConfig.feishu) currentConfig.feishu = { webhook_url: '' };
   currentConfig.feishu.webhook_url = document.getElementById('feishu-webhook').value.trim();
+
+  // Update Slack push webhook URL from input
+  if (!currentConfig.slack) currentConfig.slack = { push_webhook_url: '', workspaces: [] };
+  currentConfig.slack.push_webhook_url = document.getElementById('slack-push-webhook').value.trim();
 
   try {
     const resp = await fetch('/api/config', {

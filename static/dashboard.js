@@ -69,7 +69,7 @@ async function generateGlobalSummary(force = false) {
         // Collect all overview texts for Feishu push
         const allOverviews = (data.lists || []).map(l => `## ${l.name}\n${l.overview}`).join('\n\n');
         lastDashboardSummary = allOverviews;
-        showFeishuButton();
+        showPushButtons();
         showGlobalStatus('摘要生成成功！', 'success');
     } catch (e) {
         showGlobalStatus('生成摘要失败: ' + e.message, 'error');
@@ -241,9 +241,11 @@ globalSummaryResult.addEventListener('click', function (e) {
 // --- Feishu Push ---
 
 const btnFeishuPushDashboard = document.getElementById('btn-feishu-push-dashboard');
+const btnSlackPushDashboard = document.getElementById('btn-slack-push-dashboard');
 
-function showFeishuButton() {
+function showPushButtons() {
     if (btnFeishuPushDashboard) btnFeishuPushDashboard.classList.remove('hidden');
+    if (btnSlackPushDashboard) btnSlackPushDashboard.classList.remove('hidden');
 }
 
 if (btnFeishuPushDashboard) {
@@ -267,6 +269,33 @@ if (btnFeishuPushDashboard) {
         } finally {
             btnFeishuPushDashboard.disabled = false;
             btnFeishuPushDashboard.textContent = '🐦 推送到飞书';
+        }
+    });
+}
+
+// --- Slack Push ---
+
+if (btnSlackPushDashboard) {
+    btnSlackPushDashboard.addEventListener('click', async function () {
+        if (!lastDashboardSummary) {
+            showGlobalStatus('没有可推送的摘要内容', 'error');
+            return;
+        }
+        btnSlackPushDashboard.disabled = true;
+        btnSlackPushDashboard.innerHTML = '<span class="spinner"></span>推送中...';
+        try {
+            const resp = await fetch('/api/slack/push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: lastDashboardSummary, title: '📊 全局信息汇总' }),
+            });
+            const result = await resp.json();
+            showGlobalStatus(result.message, result.ok ? 'success' : 'error');
+        } catch (e) {
+            showGlobalStatus('推送失败: ' + e.message, 'error');
+        } finally {
+            btnSlackPushDashboard.disabled = false;
+            btnSlackPushDashboard.textContent = '💬 推送到 Slack';
         }
     });
 }
