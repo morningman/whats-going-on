@@ -162,6 +162,20 @@ def _mask_tokens(config: dict) -> dict:
         safe.setdefault("feishu", {})["webhook_url"] = feishu_url[:40] + "..." + feishu_url[-6:]
     elif feishu_url:
         safe.setdefault("feishu", {})["webhook_url"] = "***"
+    # Mask Feishu Bot A app_secret
+    bot_a = safe.get("feishu", {}).get("bot_a", {})
+    bot_a_secret = bot_a.get("app_secret", "")
+    if bot_a_secret and len(bot_a_secret) > 8:
+        bot_a["app_secret"] = bot_a_secret[:4] + "..." + bot_a_secret[-4:]
+    elif bot_a_secret:
+        bot_a["app_secret"] = "***"
+    # Mask Feishu Bot B webhook URL
+    bot_b = safe.get("feishu", {}).get("bot_b", {})
+    bot_b_url = bot_b.get("webhook_url", "")
+    if bot_b_url and len(bot_b_url) > 20:
+        bot_b["webhook_url"] = bot_b_url[:40] + "..." + bot_b_url[-6:]
+    elif bot_b_url:
+        bot_b["webhook_url"] = "***"
     return safe
 
 
@@ -221,6 +235,18 @@ def _restore_masked_tokens(new_config: dict) -> dict:
     feishu_url = new_feishu.get("webhook_url", "")
     if feishu_url and ("..." in feishu_url or feishu_url == "***"):
         new_feishu["webhook_url"] = old_feishu.get("webhook_url", "")
+    # Restore masked Feishu Bot A app_secret
+    old_bot_a = old_feishu.get("bot_a", {})
+    new_bot_a = new_feishu.get("bot_a", {})
+    bot_a_secret = new_bot_a.get("app_secret", "")
+    if bot_a_secret and ("..." in bot_a_secret or bot_a_secret == "***"):
+        new_bot_a["app_secret"] = old_bot_a.get("app_secret", "")
+    # Restore masked Feishu Bot B webhook URL
+    old_bot_b = old_feishu.get("bot_b", {})
+    new_bot_b = new_feishu.get("bot_b", {})
+    bot_b_url = new_bot_b.get("webhook_url", "")
+    if bot_b_url and ("..." in bot_b_url or bot_b_url == "***"):
+        new_bot_b["webhook_url"] = old_bot_b.get("webhook_url", "")
 
     return new_config
 
@@ -1266,6 +1292,246 @@ def api_feishu_push():
     except Exception as e:
         logger.exception("POST /api/feishu/push — error")
         return jsonify({"ok": False, "message": f"推送失败: {str(e)}"})
+
+
+@app.route("/api/feishu/create-doc", methods=["POST"])
+def api_feishu_create_doc():
+    """Create a Feishu document from AI summary content using Bot A (app credentials)."""
+    config = load_config()
+    bot_a = config.get("feishu", {}).get("bot_a", {})
+    app_id = bot_a.get("app_id", "")
+    app_secret = bot_a.get("app_secret", "")
+    if not app_id or not app_secret:
+        logger.warning("POST /api/feishu/create-doc — Bot A credentials not configured")
+        return jsonify({"ok": False, "message": "飞书机器人 A（文档机器人）未配置。请在设置页面填写 App ID 和 App Secret。"}), 400
+
+    data = request.get_json()
+    if not data or not data.get("content"):
+        logger.warning("POST /api/feishu/create-doc — missing content")
+        return jsonify({"ok": False, "message": "文档内容不能为空"}), 400
+
+    content = data["content"]
+    title = data.get("title", "GitHub AI 摘要")
+    date_range = data.get("date_range", "")
+    sub_folder = data.get("sub_folder", "")
+    if date_range:
+        title = f"{title}（{date_range}）"
+    folder_token = bot_a.get("folder_token", "")
+    owner_email = bot_a.get("owner_email", "")
+    logger.info("POST /api/feishu/create-doc — title=%s, content_len=%d", title, len(content))
+
+    try:
+        from sources.feishu import FeishuDocService
+        svc = FeishuDocService()
+        result = svc.create_doc_from_markdown(app_id, app_secret, title, content, folder_token, owner_email, sub_folder)
+        return jsonify({"ok": True, "doc_url": result["doc_url"], "document_id": result["document_id"],
+                        "message": f"文档创建成功！"})
+    except Exception as e:
+        logger.exception("POST /api/feishu/create-doc — error")
+        return jsonify({"ok": False, "message": f"创建文档失败: {str(e)}"})
+
+
+@app.route("/api/feishu/push-doc-link", methods=["POST"])
+def api_feishu_push_doc_link():
+    """Push a document link to a Feishu group chat via Bot B webhook."""
+    config = load_config()
+    webhook_url = config.get("feishu", {}).get("bot_b", {}).get("webhook_url", "")
+    if not webhook_url:
+        logger.warning("POST /api/feishu/push-doc-link — Bot B webhook not configured")
+        return jsonify({"ok": False, "message": "飞书机器人 B（通知机器人）未配置。请在设置页面填写 Webhook URL。"}), 400
+
+    data = request.get_json()
+    doc_url = data.get("doc_url", "") if data else ""
+    title = data.get("title", "GitHub AI 摘要") if data else ""
+    if not doc_url:
+        return jsonify({"ok": False, "message": "文档链接不能为空"}), 400
+
+    logger.info("POST /api/feishu/push-doc-link — title=%s, doc_url=%s", title, doc_url)
+
+    try:
+        from sources.feishu import FeishuDocService
+        result = FeishuDocService.push_link_to_webhook(webhook_url, title, doc_url)
+        if result.get("code") == 0 or result.get("StatusCode") == 0:
+            return jsonify({"ok": True, "message": "文档链接已推送到飞书群！"})
+        else:
+            msg = result.get("msg") or result.get("StatusMessage") or str(result)
+            return jsonify({"ok": False, "message": f"飞书返回错误: {msg}"})
+    except Exception as e:
+        logger.exception("POST /api/feishu/push-doc-link — error")
+        return jsonify({"ok": False, "message": f"推送失败: {str(e)}"})
+
+
+@app.route("/api/feishu/create-and-push", methods=["POST"])
+def api_feishu_create_and_push():
+    """Combined: create a Feishu doc (Bot A) and push its link to group (Bot B)."""
+    config = load_config()
+    bot_a = config.get("feishu", {}).get("bot_a", {})
+    bot_b_webhook = config.get("feishu", {}).get("bot_b", {}).get("webhook_url", "")
+    app_id = bot_a.get("app_id", "")
+    app_secret = bot_a.get("app_secret", "")
+
+    if not app_id or not app_secret:
+        return jsonify({"ok": False, "message": "飞书机器人 A（文档机器人）未配置。请在设置页面填写 App ID 和 App Secret。"}), 400
+
+    data = request.get_json()
+    if not data or not data.get("content"):
+        return jsonify({"ok": False, "message": "文档内容不能为空"}), 400
+
+    content = data["content"]
+    title = data.get("title", "GitHub AI 摘要")
+    date_range = data.get("date_range", "")
+    sub_folder = data.get("sub_folder", "")
+    if date_range:
+        title = f"{title}（{date_range}）"
+    folder_token = bot_a.get("folder_token", "")
+    owner_email = bot_a.get("owner_email", "")
+    logger.info("POST /api/feishu/create-and-push — title=%s, content_len=%d", title, len(content))
+
+    try:
+        from sources.feishu import FeishuDocService
+        svc = FeishuDocService()
+
+        # Step 1: Create document via Bot A
+        doc_result = svc.create_doc_from_markdown(app_id, app_secret, title, content, folder_token, owner_email, sub_folder)
+        doc_url = doc_result["doc_url"]
+        logger.info("POST /api/feishu/create-and-push — doc created: %s", doc_url)
+
+        # Step 2: Push link via Bot B (if configured)
+        push_msg = ""
+        if bot_b_webhook:
+            try:
+                push_result = FeishuDocService.push_link_to_webhook(bot_b_webhook, title, doc_url)
+                if push_result.get("code") == 0 or push_result.get("StatusCode") == 0:
+                    push_msg = "，链接已推送到飞书群"
+                else:
+                    push_msg = "，但推送链接到飞书群失败"
+            except Exception as push_err:
+                logger.warning("POST /api/feishu/create-and-push — push failed: %s", push_err)
+                push_msg = "，但推送链接到飞书群失败"
+        else:
+            push_msg = "（机器人 B 未配置，链接未推送到群）"
+
+        return jsonify({
+            "ok": True,
+            "doc_url": doc_url,
+            "document_id": doc_result["document_id"],
+            "message": f"文档创建成功{push_msg}！",
+        })
+    except Exception as e:
+        logger.exception("POST /api/feishu/create-and-push — error")
+        return jsonify({"ok": False, "message": f"创建文档失败: {str(e)}"})
+
+
+@app.route("/api/feishu/create-batch-docs", methods=["POST"])
+def api_feishu_create_batch_docs():
+    """Batch: create a date-range subfolder, then create one doc per repo (parallel)."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    config = load_config()
+    bot_a = config.get("feishu", {}).get("bot_a", {})
+    bot_b_webhook = config.get("feishu", {}).get("bot_b", {}).get("webhook_url", "")
+    app_id = bot_a.get("app_id", "")
+    app_secret = bot_a.get("app_secret", "")
+    folder_token = bot_a.get("folder_token", "")
+    owner_email = bot_a.get("owner_email", "")
+
+    if not app_id or not app_secret:
+        return jsonify({"ok": False, "message": "飞书机器人 A 未配置"}), 400
+    if not folder_token:
+        return jsonify({"ok": False, "message": "Folder Token 未配置"}), 400
+
+    data = request.get_json()
+    documents = data.get("documents", [])
+    date_range = data.get("date_range", "")
+
+    if not documents:
+        return jsonify({"ok": False, "message": "没有文档数据"}), 400
+    if not date_range:
+        date_range = "未知时间范围"
+
+    logger.info("POST /api/feishu/create-batch-docs — %d docs, range=%s", len(documents), date_range)
+
+    try:
+        from sources.feishu import FeishuDocService
+        svc = FeishuDocService()
+        token = svc._get_tenant_access_token(app_id, app_secret)
+
+        # Step 1: Create date-range subfolder
+        date_folder_token = svc.ensure_folder_path(token, folder_token, [date_range])
+
+        # Step 2: Create docs in parallel
+        def create_single_doc(doc_info):
+            repo_id = doc_info.get("repo_id", "unknown")
+            title = doc_info.get("title", "摘要")
+            doc_title = f"🐙 {title}"
+            content = doc_info.get("content", "")
+            try:
+                svc.delete_existing_doc(token, date_folder_token, doc_title)
+                result = svc.create_doc_from_markdown(
+                    app_id, app_secret, doc_title,
+                    content, date_folder_token, owner_email,
+                )
+                return {"repo_id": repo_id, "title": title, "doc_url": result["doc_url"],
+                        "document_id": result["document_id"], "ok": True}
+            except Exception as e:
+                logger.warning("Batch: failed for %s: %s", repo_id, e)
+                return {"repo_id": repo_id, "title": title, "ok": False, "error": str(e)}
+
+        MAX_WORKERS = 3
+        results = []
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {pool.submit(create_single_doc, doc): doc for doc in documents}
+            for future in as_completed(futures):
+                results.append(future.result())
+
+        # Step 3: Get folder URL (with fallback)
+        folder_url = ""
+        try:
+            resp = requests.post(
+                f"https://open.feishu.cn/open-apis/drive/v1/metas/batch_query",
+                json={"request_docs": [{"doc_token": date_folder_token, "doc_type": "folder"}], "with_url": True},
+                headers=svc._auth_headers(token), timeout=15)
+            resp_data = resp.json()
+            metas = resp_data.get("data", {}).get("metas", [])
+            if metas:
+                folder_url = metas[0].get("url", "")
+            logger.info("Batch: folder metas query code=%s metas=%d url=%s",
+                        resp_data.get("code"), len(metas), folder_url)
+        except Exception as e:
+            logger.warning("Batch: folder metas query failed: %s", e)
+
+        # Fallback: construct URL directly
+        if not folder_url and date_folder_token:
+            folder_url = f"https://bcntnaqps5sg.feishu.cn/drive/folder/{date_folder_token}"
+            logger.info("Batch: using fallback folder URL: %s", folder_url)
+
+        # Step 4: Set folder public readable
+        try:
+            svc._set_public_readable(token, date_folder_token)
+        except Exception:
+            pass
+
+        # Step 5: Push to Bot B
+        push_msg = ""
+        success_count = sum(1 for r in results if r.get("ok"))
+        if bot_b_webhook and folder_url:
+            try:
+                push_result = FeishuDocService.push_link_to_webhook(
+                    bot_b_webhook, f"📊 GitHub 摘要（{date_range}）", folder_url)
+                if push_result.get("code") == 0 or push_result.get("StatusCode") == 0:
+                    push_msg = "，链接已推送到飞书群"
+            except Exception:
+                pass
+
+        return jsonify({
+            "ok": True,
+            "message": f"成功创建 {success_count}/{len(documents)} 个文档{push_msg}",
+            "folder_url": folder_url,
+            "documents": results,
+        })
+    except Exception as e:
+        logger.exception("POST /api/feishu/create-batch-docs — error")
+        return jsonify({"ok": False, "message": f"批量创建失败: {str(e)}"})
 
 
 # --- Slack Push API ---

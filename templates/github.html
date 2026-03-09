@@ -21,6 +21,8 @@
         <button class="ds-range-btn" data-lang="en">English</button>
     </div>
     <button class="btn btn-daily-summary" id="btn-gh-run">加载并生成摘要</button>
+    <button class="btn btn-daily-summary" id="btn-gh-run-all"
+        style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">🚀 生成全部摘要</button>
 </div>
 
 <div id="gh-status" class="status hidden"></div>
@@ -30,9 +32,20 @@
     <div class="digest-header">
         <h2 id="gh-digest-title">📊 仓库活动摘要</h2>
         <button class="btn btn-sm btn-feishu hidden" id="btn-feishu-push-gh" title="推送到飞书">🐦 推送到飞书</button>
+        <button class="btn btn-sm btn-feishu hidden" id="btn-feishu-create-doc-gh" title="创建飞书文档并推送链接">📄
+            创建飞书文档</button>
         <button class="btn btn-sm btn-slack hidden" id="btn-slack-push-gh" title="推送到 Slack">💬 推送到 Slack</button>
     </div>
     <div id="gh-digest-content" class="digest-content"></div>
+</div>
+
+<!-- Batch digest section -->
+<div id="gh-batch-section" class="card hidden">
+    <div class="digest-header">
+        <h2 id="gh-batch-title">📊 全部仓库摘要</h2>
+        <button class="btn btn-sm btn-feishu" id="btn-feishu-push-all" title="批量推送到飞书">📄 批量推送飞书文档</button>
+    </div>
+    <div id="gh-batch-content" class="digest-content"></div>
 </div>
 
 <div id="gh-activity-section" class="hidden">

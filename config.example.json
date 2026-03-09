@@ -69,7 +69,16 @@
     ]
   },
   "feishu": {
-    "webhook_url": ""
+    "webhook_url": "",
+    "bot_a": {
+      "app_id": "",
+      "app_secret": "",
+      "folder_token": "",
+      "owner_email": ""
+    },
+    "bot_b": {
+      "webhook_url": ""
+    }
   },
   "slack": {
     "push_webhook_url": "",

@@ -171,15 +171,60 @@
 <!-- 飞书推送 -->
 <div class="card">
   <h2>🐦 飞书推送</h2>
-  <p style="color:#718096; font-size:0.9rem; margin-bottom:12px;">
-    配置飞书自定义机器人 Webhook URL，用于将 AI 摘要推送到飞书群。
-    <a href="https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot" target="_blank" rel="noopener"
-      style="color:#4299e1;">如何创建？</a>
-  </p>
-  <div class="form-group">
-    <label for="feishu-webhook">Webhook URL</label>
-    <input type="text" id="feishu-webhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/...">
+
+  <!-- Bot A: 文档创建机器人 -->
+  <div style="background:#f7fafc; border:1px solid #e2e8f0; border-radius:8px; padding:16px; margin-bottom:16px;">
+    <p style="font-weight:600; margin-bottom:8px; color:#2d3748;">📄 机器人 A — 文档创建（自建应用）</p>
+    <p style="color:#718096; font-size:0.85rem; margin-bottom:12px;">
+      使用飞书自建应用 API 将摘要创建为飞书文档。
+      <a href="https://open.feishu.cn/app" target="_blank" rel="noopener" style="color:#4299e1;">如何创建自建应用？</a>
+    </p>
+    <div class="form-group">
+      <label for="feishu-bot-a-app-id">App ID</label>
+      <input type="text" id="feishu-bot-a-app-id" placeholder="cli_xxxxxxxxxxxxxxxx">
+    </div>
+    <div class="form-group">
+      <label for="feishu-bot-a-app-secret">App Secret</label>
+      <input type="password" id="feishu-bot-a-app-secret" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+    </div>
+    <div class="form-group">
+      <label for="feishu-bot-a-folder-token">Folder Token <span
+          style="color:#a0aec0; font-weight:normal;">(可选，文档存放的文件夹)</span></label>
+      <input type="text" id="feishu-bot-a-folder-token" placeholder="fldcnXXXXXXXXXXXXXX">
+    </div>
+    <div class="form-group">
+      <label for="feishu-bot-a-owner-email">文档所有者 <span
+          style="color:#a0aec0; font-weight:normal;">(邮箱或手机号，创建后自动授予完全权限)</span></label>
+      <input type="text" id="feishu-bot-a-owner-email" placeholder="13800000000 或 your@company.com">
+    </div>
   </div>
+
+  <!-- Bot B: 群通知机器人 -->
+  <div style="background:#f7fafc; border:1px solid #e2e8f0; border-radius:8px; padding:16px; margin-bottom:16px;">
+    <p style="font-weight:600; margin-bottom:8px; color:#2d3748;">📢 机器人 B — 群消息推送（自定义机器人 Webhook）</p>
+    <p style="color:#718096; font-size:0.85rem; margin-bottom:12px;">
+      将文档链接推送到指定飞书群。
+      <a href="https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot" target="_blank" rel="noopener"
+        style="color:#4299e1;">如何添加自定义机器人？</a>
+    </p>
+    <div class="form-group">
+      <label for="feishu-bot-b-webhook">Webhook URL</label>
+      <input type="text" id="feishu-bot-b-webhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/...">
+    </div>
+  </div>
+
+  <!-- Legacy: 原有飞书 Webhook -->
+  <details style="margin-top:4px;">
+    <summary style="cursor:pointer; color:#718096; font-size:0.85rem; user-select:none;">
+      兼容模式：原有飞书自定义机器人 Webhook（直接发送富文本消息）
+    </summary>
+    <div style="background:#f7fafc; border:1px solid #e2e8f0; border-radius:8px; padding:16px; margin-top:8px;">
+      <div class="form-group">
+        <label for="feishu-webhook">Webhook URL</label>
+        <input type="text" id="feishu-webhook" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/...">
+      </div>
+    </div>
+  </details>
 </div>
 
 <!-- Slack 推送 -->

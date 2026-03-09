@@ -440,10 +440,12 @@ async function viewHistorySummary(filename) {
 // --- Feishu Push ---
 
 const btnFeishuPushGh = document.getElementById('btn-feishu-push-gh');
+const btnFeishuCreateDocGh = document.getElementById('btn-feishu-create-doc-gh');
 const btnSlackPushGh = document.getElementById('btn-slack-push-gh');
 
 function showPushButtons() {
     if (btnFeishuPushGh) btnFeishuPushGh.classList.remove('hidden');
+    if (btnFeishuCreateDocGh) btnFeishuCreateDocGh.classList.remove('hidden');
     if (btnSlackPushGh) btnSlackPushGh.classList.remove('hidden');
 }
 
@@ -469,6 +471,60 @@ if (btnFeishuPushGh) {
         } finally {
             btnFeishuPushGh.disabled = false;
             btnFeishuPushGh.textContent = '🐦 推送到飞书';
+        }
+    });
+}
+
+// --- Feishu Create Doc (Bot A + Bot B combined) ---
+
+if (btnFeishuCreateDocGh) {
+    btnFeishuCreateDocGh.addEventListener('click', async function () {
+        if (!lastGhSummary) {
+            showGhStatus('没有可推送的摘要内容', 'error');
+            return;
+        }
+        const repoName = repoSelect.options[repoSelect.selectedIndex]?.textContent || 'GitHub 摘要';
+        const repoId = repoSelect.value || 'unknown';
+
+        // Compute date range label
+        let dateRange = '';
+        if (selectedGhRange === 'last-week') {
+            const range = getLastWeekRange();
+            dateRange = `${range.start} ~ ${range.end}`;
+        } else {
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setDate(endDate.getDate() - (selectedGhDays - 1));
+            dateRange = `${startDate.toISOString().slice(0, 10)} ~ ${endDate.toISOString().slice(0, 10)}`;
+        }
+
+        // Sub-folder: github/{repo-id}
+        const subFolder = `github/${repoId}`;
+
+        btnFeishuCreateDocGh.disabled = true;
+        btnFeishuCreateDocGh.innerHTML = '<span class="spinner"></span>创建中...';
+        try {
+            const resp = await fetch('/api/feishu/create-and-push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    content: lastGhSummary,
+                    title: `🐙 ${repoName}`,
+                    date_range: dateRange,
+                    sub_folder: subFolder,
+                }),
+            });
+            const result = await resp.json();
+            if (result.ok && result.doc_url) {
+                showGhStatus(`${result.message} 文档链接: ${result.doc_url}`, 'success');
+            } else {
+                showGhStatus(result.message, result.ok ? 'success' : 'error');
+            }
+        } catch (e) {
+            showGhStatus('创建文档失败: ' + e.message, 'error');
+        } finally {
+            btnFeishuCreateDocGh.disabled = false;
+            btnFeishuCreateDocGh.textContent = '📄 创建飞书文档';
         }
     });
 }
@@ -567,6 +623,179 @@ if (btnSlackPushHistory) {
 
 // Event listeners
 btnGhRun.addEventListener('click', runCombinedFlow);
+
+// --- Batch Summarize All Repos ---
+
+const btnGhRunAll = document.getElementById('btn-gh-run-all');
+const ghBatchSection = document.getElementById('gh-batch-section');
+const ghBatchContent = document.getElementById('gh-batch-content');
+const ghBatchTitle = document.getElementById('gh-batch-title');
+const btnFeishuPushAll = document.getElementById('btn-feishu-push-all');
+
+let batchSummaries = {};
+
+function getDateRangeLabel() {
+    if (selectedGhRange === 'last-week') {
+        const range = getLastWeekRange();
+        return `${range.start} ~ ${range.end}`;
+    }
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - (selectedGhDays - 1));
+    return `${startDate.toISOString().slice(0, 10)} ~ ${endDate.toISOString().slice(0, 10)}`;
+}
+
+function summarizeRepo(repoId, repoName) {
+    return new Promise((resolve) => {
+        let url;
+        if (selectedGhRange === 'last-week') {
+            const range = getLastWeekRange();
+            url = `/api/github/digest/stream?repo_id=${encodeURIComponent(repoId)}&start_date=${range.start}&end_date=${range.end}&lang=${selectedGhLang}`;
+        } else {
+            url = `/api/github/digest/stream?repo_id=${encodeURIComponent(repoId)}&days=${selectedGhDays}&lang=${selectedGhLang}`;
+        }
+        const es = new EventSource(url);
+        es.onmessage = function (e) {
+            let event;
+            try { event = JSON.parse(e.data); } catch { return; }
+            if (event.type === 'progress' || event.type === 'retry') {
+                appendProgressItem(event.type, `[${repoName}] ${event.message}`);
+            } else if (event.type === 'activity_loaded') {
+                markProgressComplete();
+                appendProgressItem('done', `[${repoName}] 数据加载完成，生成摘要中...`);
+            } else if (event.type === 'error') {
+                appendProgressItem('error', `[${repoName}] ${event.message}`);
+                markProgressComplete(); es.close();
+                resolve({ name: repoName, summary: null });
+            } else if (event.type === 'done') {
+                markProgressComplete();
+                appendProgressItem('done', `[${repoName}] ✅ 摘要完成`);
+                es.close();
+                resolve({ name: repoName, summary: event.data?.summary || '' });
+            }
+        };
+        es.onerror = function () {
+            es.close(); markProgressComplete();
+            appendProgressItem('error', `[${repoName}] 连接中断`);
+            resolve({ name: repoName, summary: null });
+        };
+    });
+}
+
+// Run tasks with concurrency limit
+async function runWithConcurrency(tasks, limit) {
+    const results = [];
+    let idx = 0;
+    async function worker() {
+        while (idx < tasks.length) {
+            const i = idx++;
+            results[i] = await tasks[i]();
+        }
+    }
+    const workers = Array.from({ length: Math.min(limit, tasks.length) }, () => worker());
+    await Promise.all(workers);
+    return results;
+}
+
+async function runBatchFlow() {
+    const options = Array.from(repoSelect.options).filter(o => o.value);
+    if (options.length === 0) {
+        showGhStatus('没有已配置的仓库，请先在 Settings 页面添加', 'info');
+        return;
+    }
+    hideGhStatus(); clearProgressLog();
+    batchSummaries = {};
+    ghBatchSection.classList.add('hidden');
+    ghDigestSection.classList.add('hidden');
+    btnGhRunAll.disabled = true;
+    btnGhRunAll.innerHTML = '<span class="spinner"></span>生成中...';
+
+    const dateRange = getDateRangeLabel();
+    const MAX_CONCURRENT = 3;
+    appendProgressItem('progress', `开始为 ${options.length} 个仓库并行生成摘要（并发 ${MAX_CONCURRENT}，${dateRange}）`);
+
+    const tasks = options.map(opt => () => summarizeRepo(opt.value, opt.textContent));
+    const results = await runWithConcurrency(tasks, MAX_CONCURRENT);
+
+    let successCount = 0;
+    results.forEach((result, i) => {
+        if (result && result.summary) {
+            batchSummaries[options[i].value] = { name: result.name, summary: result.summary };
+            successCount++;
+        }
+    });
+
+    markProgressComplete();
+    appendProgressItem('done', `全部完成！成功 ${successCount}/${options.length} 个仓库`);
+
+    if (successCount > 0) {
+        ghBatchTitle.textContent = `📊 全部仓库摘要（${dateRange}）`;
+        let html = '';
+        for (const [repoId, data] of Object.entries(batchSummaries)) {
+            html += `<div style="margin-bottom:24px; padding-bottom:16px; border-bottom:1px solid rgba(255,255,255,0.1);">`;
+            html += `<h3 style="color:#667eea; margin-bottom:8px;">🐙 ${escapeHtml(data.name)}</h3>`;
+            html += renderMarkdown(data.summary);
+            html += `</div>`;
+        }
+        ghBatchContent.innerHTML = html;
+        ghBatchSection.classList.remove('hidden');
+        showGhStatus(`${successCount} 个仓库摘要已生成`, 'success');
+    } else {
+        showGhStatus('没有成功生成任何摘要', 'error');
+    }
+    btnGhRunAll.disabled = false;
+    btnGhRunAll.textContent = '🚀 生成全部摘要';
+}
+
+if (btnGhRunAll) btnGhRunAll.addEventListener('click', runBatchFlow);
+
+// --- Batch Push to Feishu ---
+if (btnFeishuPushAll) btnFeishuPushAll.addEventListener('click', async function () {
+    const keys = Object.keys(batchSummaries);
+    if (keys.length === 0) { showGhStatus('没有可推送的摘要', 'error'); return; }
+
+    const dateRange = getDateRangeLabel();
+    const documents = keys.map(repoId => ({
+        repo_id: repoId,
+        title: batchSummaries[repoId].name,
+        content: batchSummaries[repoId].summary,
+    }));
+
+    btnFeishuPushAll.disabled = true;
+    btnFeishuPushAll.innerHTML = '<span class="spinner"></span>推送中...';
+    try {
+        const resp = await fetch('/api/feishu/create-batch-docs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ documents, date_range: dateRange }),
+        });
+        const result = await resp.json();
+        if (result.ok) {
+            let msg = result.message || '';
+            if (result.folder_url) {
+                msg += ` <a href="${result.folder_url}" target="_blank" style="color:#4fc3f7;text-decoration:underline;">📁 打开文件夹</a>`;
+            }
+            // Also show individual doc links
+            const docs = result.documents || [];
+            const okDocs = docs.filter(d => d.ok);
+            if (okDocs.length > 0) {
+                msg += '<br>' + okDocs.map(d =>
+                    `  📄 <a href="${d.doc_url}" target="_blank" style="color:#81c784;text-decoration:underline;">${escapeHtml(d.title)}</a>`
+                ).join('<br>');
+            }
+            ghStatus.innerHTML = msg;
+            ghStatus.className = 'status status-success';
+            ghStatus.classList.remove('hidden');
+        } else {
+            showGhStatus(result.message || '推送失败', 'error');
+        }
+    } catch (e) {
+        showGhStatus('推送失败: ' + e.message, 'error');
+    } finally {
+        btnFeishuPushAll.disabled = false;
+        btnFeishuPushAll.textContent = '📄 批量推送飞书文档';
+    }
+});
 
 // Init
 loadRepos();

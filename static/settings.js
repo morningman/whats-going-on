@@ -680,8 +680,13 @@ async function loadConfig() {
     renderSlackWorkspaces();
     // Load GitHub token
     githubTokenInput.value = currentConfig?.github?.token || '';
-    // Load Feishu webhook URL
+    // Load Feishu config
     document.getElementById('feishu-webhook').value = currentConfig?.feishu?.webhook_url || '';
+    document.getElementById('feishu-bot-a-app-id').value = currentConfig?.feishu?.bot_a?.app_id || '';
+    document.getElementById('feishu-bot-a-app-secret').value = currentConfig?.feishu?.bot_a?.app_secret || '';
+    document.getElementById('feishu-bot-a-folder-token').value = currentConfig?.feishu?.bot_a?.folder_token || '';
+    document.getElementById('feishu-bot-a-owner-email').value = currentConfig?.feishu?.bot_a?.owner_email || '';
+    document.getElementById('feishu-bot-b-webhook').value = currentConfig?.feishu?.bot_b?.webhook_url || '';
     // Load Slack push webhook URL
     document.getElementById('slack-push-webhook').value = currentConfig?.slack?.push_webhook_url || '';
   } catch (e) {
@@ -711,9 +716,16 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   if (!currentConfig.github) currentConfig.github = { token: '', repos: [] };
   currentConfig.github.token = githubTokenInput.value.trim();
 
-  // Update Feishu webhook URL from input
-  if (!currentConfig.feishu) currentConfig.feishu = { webhook_url: '' };
+  // Update Feishu config from inputs
+  if (!currentConfig.feishu) currentConfig.feishu = { webhook_url: '', bot_a: {}, bot_b: {} };
   currentConfig.feishu.webhook_url = document.getElementById('feishu-webhook').value.trim();
+  if (!currentConfig.feishu.bot_a) currentConfig.feishu.bot_a = {};
+  currentConfig.feishu.bot_a.app_id = document.getElementById('feishu-bot-a-app-id').value.trim();
+  currentConfig.feishu.bot_a.app_secret = document.getElementById('feishu-bot-a-app-secret').value.trim();
+  currentConfig.feishu.bot_a.folder_token = document.getElementById('feishu-bot-a-folder-token').value.trim();
+  currentConfig.feishu.bot_a.owner_email = document.getElementById('feishu-bot-a-owner-email').value.trim();
+  if (!currentConfig.feishu.bot_b) currentConfig.feishu.bot_b = {};
+  currentConfig.feishu.bot_b.webhook_url = document.getElementById('feishu-bot-b-webhook').value.trim();
 
   // Update Slack push webhook URL from input
   if (!currentConfig.slack) currentConfig.slack = { push_webhook_url: '', workspaces: [] };
