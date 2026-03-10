@@ -31,7 +31,8 @@ function getLastWeekRange() {
     lastMonday.setDate(thisMonday.getDate() - 7);
     const lastSunday = new Date(lastMonday);
     lastSunday.setDate(lastMonday.getDate() + 6);
-    const fmt = d => d.toISOString().slice(0, 10);
+    // Use local date to avoid UTC timezone shift
+    const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     return { start: fmt(lastMonday), end: fmt(lastSunday) };
 }
 
@@ -641,8 +642,8 @@ function getDateRangeLabel() {
     }
     const endDate = new Date();
     const startDate = new Date();
-    startDate.setDate(endDate.getDate() - (selectedGhDays - 1));
-    return `${startDate.toISOString().slice(0, 10)} ~ ${endDate.toISOString().slice(0, 10)}`;
+    const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return `${fmt(startDate)} ~ ${fmt(endDate)}`;
 }
 
 function summarizeRepo(repoId, repoName) {
@@ -755,37 +756,39 @@ if (btnFeishuPushAll) btnFeishuPushAll.addEventListener('click', async function 
     if (keys.length === 0) { showGhStatus('没有可推送的摘要', 'error'); return; }
 
     const dateRange = getDateRangeLabel();
-    const documents = keys.map(repoId => ({
-        repo_id: repoId,
-        title: batchSummaries[repoId].name,
-        content: batchSummaries[repoId].summary,
-    }));
+
+    // Merge all summaries into one markdown document
+    const sections = keys.map(repoId => {
+        const data = batchSummaries[repoId];
+        let content = (data.summary || '').replace(/^#\s+.*\n*/m, '').trim();
+        return `# ${data.name}\n\n${content}`;
+    });
+    const mergedContent = sections.join('\n\n---\n\n');
 
     btnFeishuPushAll.disabled = true;
     btnFeishuPushAll.innerHTML = '<span class="spinner"></span>推送中...';
+
     try {
         const resp = await fetch('/api/feishu/create-batch-docs', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ documents, date_range: dateRange }),
+            body: JSON.stringify({ content: mergedContent, date_range: dateRange }),
         });
         const result = await resp.json();
         if (result.ok) {
             let msg = result.message || '';
-            if (result.folder_url) {
-                msg += ` <a href="${result.folder_url}" target="_blank" style="color:#4fc3f7;text-decoration:underline;">📁 打开文件夹</a>`;
+            if (result.doc_url) {
+                msg += `<br>📄 <a href="${result.doc_url}" target="_blank" style="color:#81c784;text-decoration:underline;">${escapeHtml(result.doc_title || '文档')}</a>`;
             }
-            // Also show individual doc links
-            const docs = result.documents || [];
-            const okDocs = docs.filter(d => d.ok);
-            if (okDocs.length > 0) {
-                msg += '<br>' + okDocs.map(d =>
-                    `  📄 <a href="${d.doc_url}" target="_blank" style="color:#81c784;text-decoration:underline;">${escapeHtml(d.title)}</a>`
-                ).join('<br>');
+            if (result.folder_url) {
+                lastBatchFolderUrl = result.folder_url;
+                lastBatchDateRange = dateRange;
+                msg += `<br>📁 <a href="${result.folder_url}" target="_blank" style="color:#4fc3f7;text-decoration:underline;">打开文件夹</a>`;
             }
             ghStatus.innerHTML = msg;
             ghStatus.className = 'status status-success';
             ghStatus.classList.remove('hidden');
+            if (lastBatchFolderUrl) btnPushToGroup.classList.remove('hidden');
         } else {
             showGhStatus(result.message || '推送失败', 'error');
         }
@@ -794,6 +797,39 @@ if (btnFeishuPushAll) btnFeishuPushAll.addEventListener('click', async function 
     } finally {
         btnFeishuPushAll.disabled = false;
         btnFeishuPushAll.textContent = '📄 批量推送飞书文档';
+    }
+});
+
+// --- Manual push folder link to Bot B ---
+let lastBatchFolderUrl = '';
+let lastBatchDateRange = '';
+const btnPushToGroup = document.getElementById('btn-feishu-push-to-group');
+
+if (btnPushToGroup) btnPushToGroup.addEventListener('click', async function () {
+    if (!lastBatchFolderUrl) { showGhStatus('没有文件夹链接', 'error'); return; }
+
+    btnPushToGroup.disabled = true;
+    btnPushToGroup.innerHTML = '<span class="spinner"></span>推送中...';
+    try {
+        const resp = await fetch('/api/feishu/push-doc-link', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                title: `Github 每周摘要（${lastBatchDateRange}）`,
+                doc_url: lastBatchFolderUrl,
+            }),
+        });
+        const result = await resp.json();
+        if (result.ok) {
+            showGhStatus('✅ 已推送到飞书群！', 'success');
+        } else {
+            showGhStatus('推送失败: ' + (result.message || ''), 'error');
+        }
+    } catch (e) {
+        showGhStatus('推送失败: ' + e.message, 'error');
+    } finally {
+        btnPushToGroup.disabled = false;
+        btnPushToGroup.textContent = '🐦 推送到飞书群';
     }
 });
 

@@ -13,7 +13,7 @@ import queue
 import threading
 
 import requests as http_requests
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 from fetchers import get_fetcher
 import asf_auth
@@ -1424,12 +1424,11 @@ def api_feishu_create_and_push():
 
 @app.route("/api/feishu/create-batch-docs", methods=["POST"])
 def api_feishu_create_batch_docs():
-    """Batch: create a date-range subfolder, then create one doc per repo (parallel)."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    """Create a single merged summary doc in a date-range subfolder."""
+    import os
 
     config = load_config()
     bot_a = config.get("feishu", {}).get("bot_a", {})
-    bot_b_webhook = config.get("feishu", {}).get("bot_b", {}).get("webhook_url", "")
     app_id = bot_a.get("app_id", "")
     app_secret = bot_a.get("app_secret", "")
     folder_token = bot_a.get("folder_token", "")
@@ -1441,97 +1440,74 @@ def api_feishu_create_batch_docs():
         return jsonify({"ok": False, "message": "Folder Token 未配置"}), 400
 
     data = request.get_json()
-    documents = data.get("documents", [])
-    date_range = data.get("date_range", "")
+    content = data.get("content", "")
+    date_range = data.get("date_range", "") or "未知时间范围"
 
-    if not documents:
-        return jsonify({"ok": False, "message": "没有文档数据"}), 400
-    if not date_range:
-        date_range = "未知时间范围"
+    if not content:
+        return jsonify({"ok": False, "message": "没有文档内容"}), 400
 
-    logger.info("POST /api/feishu/create-batch-docs — %d docs, range=%s", len(documents), date_range)
+    doc_title = f"Github 摘要（{date_range}）"
+    logger.info("POST /api/feishu/create-batch-docs — title=%s", doc_title)
 
     try:
+        # Save locally
+        local_dir = os.path.join(os.path.dirname(__file__), "summaries")
+        os.makedirs(local_dir, exist_ok=True)
+        safe_name = date_range.replace("/", "-").replace("\\", "-")
+        local_file = os.path.join(local_dir, f"Github 摘要（{safe_name}）.md")
+        with open(local_file, "w", encoding="utf-8") as f:
+            f.write(content)
+        logger.info("Saved local summary: %s", local_file)
+
         from sources.feishu import FeishuDocService
         svc = FeishuDocService()
         token = svc._get_tenant_access_token(app_id, app_secret)
 
-        # Step 1: Create date-range subfolder
+        # Create date-range subfolder
         date_folder_token = svc.ensure_folder_path(token, folder_token, [date_range])
 
-        # Step 2: Create docs in parallel
-        def create_single_doc(doc_info):
-            repo_id = doc_info.get("repo_id", "unknown")
-            title = doc_info.get("title", "摘要")
-            doc_title = f"🐙 {title}"
-            content = doc_info.get("content", "")
-            try:
-                svc.delete_existing_doc(token, date_folder_token, doc_title)
-                result = svc.create_doc_from_markdown(
-                    app_id, app_secret, doc_title,
-                    content, date_folder_token, owner_email,
-                )
-                return {"repo_id": repo_id, "title": title, "doc_url": result["doc_url"],
-                        "document_id": result["document_id"], "ok": True}
-            except Exception as e:
-                logger.warning("Batch: failed for %s: %s", repo_id, e)
-                return {"repo_id": repo_id, "title": title, "ok": False, "error": str(e)}
+        # Delete existing doc with same title
+        svc.delete_existing_doc(token, date_folder_token, doc_title)
 
-        MAX_WORKERS = 3
-        results = []
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {pool.submit(create_single_doc, doc): doc for doc in documents}
-            for future in as_completed(futures):
-                results.append(future.result())
+        # Create merged document
+        result = svc.create_doc_from_markdown(
+            app_id, app_secret, doc_title,
+            content, date_folder_token, owner_email,
+        )
+        doc_url = result["doc_url"]
 
-        # Step 3: Get folder URL (with fallback)
+        # Get folder URL
         folder_url = ""
         try:
             resp = requests.post(
                 f"https://open.feishu.cn/open-apis/drive/v1/metas/batch_query",
-                json={"request_docs": [{"doc_token": date_folder_token, "doc_type": "folder"}], "with_url": True},
+                json={"request_docs": [{"doc_token": date_folder_token, "doc_type": "folder"}],
+                      "with_url": True},
                 headers=svc._auth_headers(token), timeout=15)
-            resp_data = resp.json()
-            metas = resp_data.get("data", {}).get("metas", [])
+            metas = resp.json().get("data", {}).get("metas", [])
             if metas:
                 folder_url = metas[0].get("url", "")
-            logger.info("Batch: folder metas query code=%s metas=%d url=%s",
-                        resp_data.get("code"), len(metas), folder_url)
-        except Exception as e:
-            logger.warning("Batch: folder metas query failed: %s", e)
-
-        # Fallback: construct URL directly
+        except Exception:
+            pass
         if not folder_url and date_folder_token:
             folder_url = f"https://bcntnaqps5sg.feishu.cn/drive/folder/{date_folder_token}"
-            logger.info("Batch: using fallback folder URL: %s", folder_url)
 
-        # Step 4: Set folder public readable
+        # Set folder public readable
         try:
             svc._set_public_readable(token, date_folder_token)
         except Exception:
             pass
 
-        # Step 5: Push to Bot B
-        push_msg = ""
-        success_count = sum(1 for r in results if r.get("ok"))
-        if bot_b_webhook and folder_url:
-            try:
-                push_result = FeishuDocService.push_link_to_webhook(
-                    bot_b_webhook, f"📊 GitHub 摘要（{date_range}）", folder_url)
-                if push_result.get("code") == 0 or push_result.get("StatusCode") == 0:
-                    push_msg = "，链接已推送到飞书群"
-            except Exception:
-                pass
-
         return jsonify({
             "ok": True,
-            "message": f"成功创建 {success_count}/{len(documents)} 个文档{push_msg}",
+            "message": "文档推送成功",
             "folder_url": folder_url,
-            "documents": results,
+            "doc_url": doc_url,
+            "doc_title": doc_title,
         })
     except Exception as e:
         logger.exception("POST /api/feishu/create-batch-docs — error")
-        return jsonify({"ok": False, "message": f"批量创建失败: {str(e)}"})
+        return jsonify({"ok": False, "message": f"推送失败: {str(e)}"})
 
 
 # --- Slack Push API ---

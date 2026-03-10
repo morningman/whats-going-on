@@ -551,13 +551,11 @@ class FeishuDocService:
             "content": {
                 "post": {
                     "zh_cn": {
-                        "title": f"📄 {title}",
+                        "title": title,
                         "content": [
                             [
-                                {"tag": "text", "text": "新的 GitHub 摘要文档已生成：\n"},
-                            ],
-                            [
-                                {"tag": "a", "text": f"👉 点击查看：{title}", "href": doc_url},
+                                {"tag": "text", "text": "链接地址："},
+                                {"tag": "a", "text": doc_url, "href": doc_url},
                             ],
                         ],
                     }
