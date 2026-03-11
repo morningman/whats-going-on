@@ -84,5 +84,35 @@
 {% endblock %}
 
 {% block scripts %}
+<!-- Slack Preview Modal -->
+<div id="slack-preview-modal" class="slack-modal-overlay hidden">
+    <div class="slack-modal">
+        <div class="slack-modal-header">
+            <h3>💬 Slack 消息预览</h3>
+            <button class="slack-modal-close" id="slack-modal-close">&times;</button>
+        </div>
+        <div class="slack-modal-body">
+            <!-- Markdown source editor -->
+            <div class="slack-preview-section">
+                <label class="slack-preview-label">📝 编辑内容 <span class="slack-preview-hint">（Markdown 格式，修改后下方预览会实时更新）</span></label>
+                <textarea id="slack-preview-textarea" class="slack-preview-textarea" rows="10"></textarea>
+            </div>
+
+            <!-- Rendered preview (read-only) -->
+            <div class="slack-preview-section">
+                <label class="slack-preview-label">👀 预览效果</label>
+                <div class="slack-message-preview" id="slack-message-render">
+                    <!-- Rendered preview will be injected here -->
+                </div>
+            </div>
+        </div>
+        <div class="slack-modal-footer">
+            <button class="btn btn-secondary" id="slack-modal-cancel">取消</button>
+            <button class="btn btn-secondary" id="slack-modal-reset" title="恢复到原始内容">↩️ 重置</button>
+            <button class="btn btn-slack slack-modal-send" id="slack-modal-send">🚀 发送到 Slack</button>
+        </div>
+    </div>
+</div>
+
 <script src="/static/github.js"></script>
 {% endblock %}

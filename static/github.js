@@ -18,7 +18,7 @@ let selectedGhDays = 3;
 let selectedGhLang = 'zh';
 let selectedGhRange = null; // null = use days, 'last-week' = use start_date/end_date
 let lastGhSummary = null; // Store latest digest text for Feishu push
-let lastGhActivity = null; // Store latest activity data for Slack voting poll
+
 
 // Helper: compute last week's Monday and Sunday (YYYY-MM-DD)
 function getLastWeekRange() {
@@ -175,7 +175,7 @@ function runCombinedFlow() {
             markProgressComplete();
             appendProgressItem('done', '活动数据加载完成，开始生成摘要...');
             renderActivity(event.data);
-            lastGhActivity = event.data; // Store for Slack voting poll
+
             btnGhRun.innerHTML = '<span class="spinner"></span>生成摘要中...';
         } else if (event.type === 'error') {
             appendProgressItem('error', event.message);
@@ -558,67 +558,136 @@ if (btnFeishuPushHistory) {
     });
 }
 
-// --- Slack Push ---
+// --- Slack Preview Modal ---
+
+const slackModal = document.getElementById('slack-preview-modal');
+const slackModalClose = document.getElementById('slack-modal-close');
+const slackModalCancel = document.getElementById('slack-modal-cancel');
+const slackModalSend = document.getElementById('slack-modal-send');
+const slackModalReset = document.getElementById('slack-modal-reset');
+const slackTextarea = document.getElementById('slack-preview-textarea');
+const slackMessageRender = document.getElementById('slack-message-render');
+
+let currentSlackTitle = '';
+let originalSlackContent = ''; // original markdown content for reset
+let previewDebounceTimer = null;
+
+function openSlackModal() {
+    slackModal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeSlackModal() {
+    slackModal.classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+// Close modal on overlay click, X button, or Cancel
+if (slackModalClose) slackModalClose.addEventListener('click', closeSlackModal);
+if (slackModalCancel) slackModalCancel.addEventListener('click', closeSlackModal);
+if (slackModal) {
+    slackModal.addEventListener('click', function (e) {
+        if (e.target === slackModal) closeSlackModal();
+    });
+}
+
+// Escape key to close
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !slackModal.classList.contains('hidden')) {
+        closeSlackModal();
+    }
+});
+
+// Render the preview from Markdown content
+function updateSlackPreview() {
+    const content = slackTextarea.value;
+    let html = '';
+    if (currentSlackTitle) {
+        html += `<div class="slack-preview-header">${escapeHtml(currentSlackTitle)}</div>`;
+    }
+    html += `<div class="slack-preview-body">${renderMarkdown(content)}</div>`;
+    slackMessageRender.innerHTML = html;
+}
+
+// Auto-update preview when textarea changes (debounced)
+if (slackTextarea) {
+    slackTextarea.addEventListener('input', function () {
+        clearTimeout(previewDebounceTimer);
+        previewDebounceTimer = setTimeout(updateSlackPreview, 300);
+    });
+}
+
+// Open preview modal: populate textarea and render preview
+function openSlackPreview(content, title) {
+    currentSlackTitle = title;
+    originalSlackContent = content;
+    slackTextarea.value = content;
+    updateSlackPreview();
+    openSlackModal();
+}
+
+// Reset button — revert textarea to original content
+if (slackModalReset) {
+    slackModalReset.addEventListener('click', function () {
+        slackTextarea.value = originalSlackContent;
+        updateSlackPreview();
+    });
+}
+
+// Send to Slack — use the raw Markdown from textarea
+if (slackModalSend) {
+    slackModalSend.addEventListener('click', async function () {
+        const content = slackTextarea.value;
+        if (!content.trim()) {
+            showGhStatus('推送内容不能为空', 'error');
+            return;
+        }
+        slackModalSend.disabled = true;
+        slackModalSend.innerHTML = '<span class="spinner"></span>发送中...';
+        try {
+            const resp = await fetch('/api/slack/push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    content: content,
+                    title: currentSlackTitle,
+                }),
+            });
+            const result = await resp.json();
+            closeSlackModal();
+            showGhStatus(result.message, result.ok ? 'success' : 'error');
+        } catch (e) {
+            showGhStatus('推送失败: ' + e.message, 'error');
+        } finally {
+            slackModalSend.disabled = false;
+            slackModalSend.textContent = '🚀 发送到 Slack';
+        }
+    });
+}
+
+// --- Slack Push (current digest, opens preview modal) ---
 
 if (btnSlackPushGh) {
-    btnSlackPushGh.addEventListener('click', async function () {
+    btnSlackPushGh.addEventListener('click', function () {
         if (!lastGhSummary) {
             showGhStatus('没有可推送的摘要内容', 'error');
             return;
         }
         const repoName = repoSelect.options[repoSelect.selectedIndex]?.textContent || 'GitHub 摘要';
-        btnSlackPushGh.disabled = true;
-        btnSlackPushGh.innerHTML = '<span class="spinner"></span>推送中...';
-        try {
-            const resp = await fetch('/api/slack/push', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    content: lastGhSummary,
-                    title: `🐙 ${repoName}`,
-                    voting_items: lastGhActivity || undefined,
-                }),
-            });
-            const result = await resp.json();
-            showGhStatus(result.message, result.ok ? 'success' : 'error');
-        } catch (e) {
-            showGhStatus('推送失败: ' + e.message, 'error');
-        } finally {
-            btnSlackPushGh.disabled = false;
-            btnSlackPushGh.textContent = '💬 推送到 Slack';
-        }
+        openSlackPreview(lastGhSummary, `🐙 ${repoName}`);
     });
 }
 
-// --- Slack Push (history) ---
+// --- Slack Push (history, opens preview modal) ---
 
 const btnSlackPushHistory = document.getElementById('btn-slack-push-history');
 if (btnSlackPushHistory) {
-    btnSlackPushHistory.addEventListener('click', async function () {
+    btnSlackPushHistory.addEventListener('click', function () {
         if (!lastHistorySummary) {
             showGhStatus('没有可推送的摘要内容', 'error');
             return;
         }
-        btnSlackPushHistory.disabled = true;
-        btnSlackPushHistory.innerHTML = '<span class="spinner"></span>推送中...';
-        try {
-            const resp = await fetch('/api/slack/push', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    content: lastHistorySummary,
-                    title: '🐙 历史 GitHub 摘要',
-                    voting_items: lastGhActivity || undefined,
-                }),
-            });
-            const result = await resp.json();
-            showGhStatus(result.message, result.ok ? 'success' : 'error');
-        } catch (e) {
-            showGhStatus('推送失败: ' + e.message, 'error');
-        } finally {
-            btnSlackPushHistory.disabled = false;
-            btnSlackPushHistory.textContent = '💬 推送到 Slack';
-        }
+        openSlackPreview(lastHistorySummary, '🐙 历史 GitHub 摘要');
     });
 }
 

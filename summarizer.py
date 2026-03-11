@@ -183,7 +183,16 @@ def _call_anthropic(prompt: str, provider: dict) -> str:
         messages=[{"role": "user", "content": prompt}],
     )
     elapsed = time.time() - t0
-    result = message.content[0].text
+    # Extract text from response, skipping ThinkingBlock objects
+    # (models like MiniMax M2.5 may return ThinkingBlock + TextBlock)
+    text_parts = []
+    for block in message.content:
+        if hasattr(block, "text") and block.type == "text":
+            text_parts.append(block.text)
+    result = "\n".join(text_parts) if text_parts else ""
+    if not result:
+        logger.warning("No text blocks found in Anthropic response; content types: %s",
+                       [block.type for block in message.content])
     logger.info("Anthropic API responded — %.1fs, usage: input=%s output=%s, response_len=%d",
                 elapsed, getattr(message.usage, 'input_tokens', '?'), getattr(message.usage, 'output_tokens', '?'), len(result))
     return result
@@ -597,7 +606,11 @@ def generate_daily_summary(
 
 
 def _build_github_prompt(activity: dict, repo_name: str, days: int, lang: str = "zh", date_range: str = "") -> str:
-    """Build the prompt for GitHub activity summary."""
+    """Build the prompt for GitHub activity summary.
+
+    Dispatches to a Doris-specific prompt for apache/doris repos,
+    or a generic prompt for all other repos.
+    """
     prs = activity.get("pulls", [])
     issues = activity.get("issues", [])
     stats = activity.get("stats", {})
@@ -631,21 +644,58 @@ def _build_github_prompt(activity: dict, repo_name: str, days: int, lang: str = 
             sections += f"  Author: {issue['user']} | Status: {state} | {issue.get('comments', 0)} comments{label_text}\n"
             sections += f"  Created: {issue.get('created_at', '')[:10]} | Updated: {issue.get('updated_at', '')[:10]}\n"
 
+    # Dispatch to specialized or generic prompt
+    if "doris" in repo_name.lower():
+        return _build_doris_prompt(repo_name, days, stats, sections, lang)
+    else:
+        return _build_generic_prompt(repo_name, days, stats, sections, lang)
 
+
+def _build_doris_prompt(repo_name: str, days: int, stats: dict, sections: str, lang: str) -> str:
+    """Build the Apache Doris-specific prompt (community newsletter style)."""
     if lang == "en":
-        return f"""You are a GitHub project activity analyst. Analyze and summarize the following PR and Issue activity for the repository "{repo_name}" over the last {days} days.
+        return f"""You are a technical communication expert for the Apache Doris open-source community. Your task is to identify the most compelling technical progress from the PR and Issue activity of the repository "{repo_name}" over the last {days} days, and write a developer-facing newsletter that excites readers about the latest direction of the Doris community and inspires them to participate.
 
 **Please output in English.**
 
-Provide a structured Markdown summary containing:
+## Doris Project Core Directions (use for prioritization)
 
-1. **Trend Analysis**: Brief analysis of project activity, focus areas, etc.
-2. **Overview**: 2-3 sentences summarizing the repository's recent activity
-3. **Key PRs**: List the most important Pull Requests (merged first), briefly explaining their content and significance. Each PR must include a clickable link in the format [#number](URL)
-4. **Active Issues**: List noteworthy Issues, especially those with many comments or important labels. Each Issue must include a clickable link in the format [#number](URL)
+Apache Doris aims to be the **AI-era data infrastructure** for multimodal data management and agentic interaction. Prioritize PRs and Issues related to these directions:
 
-Note: When mentioning PRs or Issues, always use Markdown link format [#number](URL) to make them clickable to the GitHub page.
-IMPORTANT: Use unordered bullet lists (- item) to present PRs and Issues. Do NOT use markdown tables.
+1. **Columnar JSON / Variant Type** — High-performance analytics on semi-structured data (business logs, schema-free JSON ingestion)
+2. **Hybrid Search** — Full-text search + vector search fusion for RAG / knowledge base scenarios
+3. **Multimodal Data & Open Lakehouse Formats** — Multimodal data management and integration/optimization with open formats such as Lance, Iceberg, Paimon, etc.
+4. **Semantic Layer & MCP Protocol** — Enabling AI Agents to interact with databases via natural language (Agentic Analytics)
+5. **AI SQL** — Invoking LLMs directly within SQL for text classification, sentiment analysis, summarization, etc.
+
+## Output Format
+
+Produce a Markdown newsletter with these three sections:
+
+### 1. 🔥 Highlights (1–3 items)
+
+Select **1 to 3 PRs or Issues that best represent the core directions above**. For each:
+- Write an eye-catching one-line headline that conveys the value (don't just repeat the PR title)
+- In 2–3 sentences explain: what problem does this solve? Why is it important? What value does it bring to users?
+- Include a clickable link in the format [#number](URL)
+
+If no PRs/Issues align with the core directions, pick the ones with the greatest technical impact.
+
+### 2. 📋 Also Noteworthy
+
+A concise bullet list of other important PRs and Issues (one sentence each), sorted by importance. Each item must include a link [#number](URL).
+
+### 3. 📊 This Period in Numbers
+
+Briefly list the statistics.
+
+## Writing Style
+
+- **Don't just list** — curate the most valuable content, don't mechanically list every PR and Issue
+- **Tell readers "why it matters"** — every highlight should answer "so what?"
+- **Community-facing** — friendly, energizing tone, like a community weekly, not a work report
+- **Use unordered bullet lists (- item), do NOT use markdown tables**
+- **Always use Markdown link format [#number](URL) when mentioning PRs or Issues**
 
 Statistics:
 - Total PRs: {stats.get('total_prs', 0)} (Merged: {stats.get('merged_prs', 0)}, Open: {stats.get('open_prs', 0)}, Closed: {stats.get('closed_prs', 0)})
@@ -654,19 +704,140 @@ Statistics:
 ---
 {sections}"""
     else:
-        return f"""你是一个 GitHub 项目活动分析助手。请对以下仓库 "{repo_name}" 最近 {days} 天的 PR 和 Issue 活动进行分析和总结。
+        return f"""你是 Apache Doris 开源社区的技术传播专家。你的任务是从以下仓库 "{repo_name}" 最近 {days} 天的 PR 和 Issue 活动中，挖掘出最吸引人的技术进展，写成一份面向开发者社区的简报，目的是让读者对 Doris 社区的最新方向感到兴奋，并激发参与社区贡献的意愿。
 
 **请使用中文输出。**
 
-请提供一个结构化的 Markdown 格式摘要，包含：
+## Doris 项目核心方向（用于判断优先级）
 
-1. **趋势观察**: 对项目活跃度、关注领域等做简要分析
-2. **总览**: 用 2-3 句话概括这个仓库最近的活动情况
-3. **重要 PR**: 列出最重要的 Pull Request（已合并的优先），简要说明其内容和意义。每个 PR 必须包含可点击的链接，格式为 [#编号](链接地址)
-4. **活跃 Issue**: 列出值得关注的 Issue，特别是评论较多或有重要标签的。每个 Issue 必须包含可点击的链接，格式为 [#编号](链接地址)
+Apache Doris 的愿景是成为 **AI 时代的数据基础设施**，服务于多模态数据管理与智能交互。以下是当前最重要的技术方向，请优先关注与这些方向相关的 PR 和 Issue：
 
-注意：在提到 PR 或 Issue 时，务必使用 Markdown 链接格式 [#编号](URL) 使其可点击跳转到 GitHub 页面。
-**重要：请使用无序列表（- 列表项）来展示 PR 和 Issue，不要使用 Markdown 表格。**
+1. **Columnar JSON / Variant 数据类型** — 半结构化数据的高性能分析（业务日志、JSON 数据零加工入库）
+2. **混合搜索 (Hybrid Search)** — 全文检索 + 向量检索融合，服务 RAG / 知识库场景
+3. **多模态数据 & 开放湖格式** — 多模态数据管理，以及 Lance、Iceberg、Paimon 等开放湖格式的集成、读写优化等
+4. **语义层 & MCP 协议** — 让 AI Agent 能通过自然语言与数据库交互（Agentic Analytics）
+5. **AI SQL** — 在 SQL 中直接调用 LLM 进行文本分类、情感分析、摘要提取等
+
+## 输出格式要求
+
+请提供一个 Markdown 格式的简报，包含以下三个部分：
+
+### 1. 🔥 亮点进展（1-3 个）
+
+从所有 PR 和 Issue 中，挑选 **1 到 3 个最能体现 Doris 项目核心方向（见上方）的 PR 或 Issue**。对于每一个：
+- 用一句引人注目的标题概括这个进展的价值（不要简单重复 PR 标题）
+- 用 2-3 句话解释：这个改动解决了什么问题？为什么重要？对用户有什么价值？
+- 附上 PR/Issue 链接，格式为 [#编号](URL)
+
+如果没有与核心方向相关的 PR/Issue，则选择技术影响最大的作为亮点。
+
+### 2. 📋 其他值得关注
+
+用简洁的列表列出其他重要的 PR 和 Issue（每项 1 句话概括即可），按重要程度排序。每项必须包含链接 [#编号](URL)。
+
+### 3. 📊 本期数据
+
+简要列出统计数据。
+
+## 写作风格要求
+
+- **不要罗列**：不要机械地列出所有 PR 和 Issue，而是精选最有价值的内容
+- **告诉读者"为什么重要"**：每个亮点都要回答"so what?"
+- **面向社区**：语气友好、有感染力，像是社区周报而不是工作汇报
+- **使用无序列表（- 列表项）展示，不要使用 Markdown 表格**
+- **提到 PR 或 Issue 时务必使用 Markdown 链接格式 [#编号](URL)**
+
+统计数据:
+- PR 总数: {stats.get('total_prs', 0)} (合并: {stats.get('merged_prs', 0)}, 开放: {stats.get('open_prs', 0)}, 关闭: {stats.get('closed_prs', 0)})
+- Issue 总数: {stats.get('total_issues', 0)} (开放: {stats.get('open_issues', 0)}, 关闭: {stats.get('closed_issues', 0)})
+
+---
+{sections}"""
+
+
+def _build_generic_prompt(repo_name: str, days: int, stats: dict, sections: str, lang: str) -> str:
+    """Build a generic prompt for any GitHub repository."""
+    if lang == "en":
+        return f"""You are a GitHub open-source project analyst. Your task is to analyze the PR and Issue activity of the repository "{repo_name}" over the last {days} days and produce a clear, informative summary that helps technical leaders quickly understand what is happening in this community.
+
+**Please output in English.**
+
+## Output Format
+
+Produce a structured Markdown summary with these sections:
+
+### 1. 🔍 What's Happening
+
+In 3-5 sentences, describe the overall direction of the project right now. What areas are getting the most attention? Are there any significant new features, architectural changes, or important bug fixes underway? Give the reader a high-level mental map of what this community is focused on.
+
+### 2. 🔥 Key PRs (3-5 items)
+
+List the most important Pull Requests (prioritize merged PRs, then significant open PRs). For each:
+- A one-line summary that explains the value or impact (not just the PR title)
+- The current status (Merged / Open / Closed)
+- A clickable link in the format [#number](URL)
+
+### 3. 🐛 Notable Issues (3-5 items)
+
+List the most noteworthy Issues — especially those with active discussion, many comments, or important labels. For each:
+- A one-line summary of what the issue is about and why it matters
+- A clickable link in the format [#number](URL)
+
+### 4. 📊 Statistics
+
+Briefly list the activity statistics.
+
+## Writing Style
+
+- **Be concise and informative** — the reader is a busy technical leader who needs a quick overview
+- **Focus on "what" and "why"** — what is being worked on, and why it matters
+- **Group related PRs/Issues** when they belong to the same feature or effort
+- **Use unordered bullet lists (- item), do NOT use markdown tables**
+- **Always use Markdown link format [#number](URL) when mentioning PRs or Issues**
+
+Statistics:
+- Total PRs: {stats.get('total_prs', 0)} (Merged: {stats.get('merged_prs', 0)}, Open: {stats.get('open_prs', 0)}, Closed: {stats.get('closed_prs', 0)})
+- Total Issues: {stats.get('total_issues', 0)} (Open: {stats.get('open_issues', 0)}, Closed: {stats.get('closed_issues', 0)})
+
+---
+{sections}"""
+    else:
+        return f"""你是一个 GitHub 开源项目分析师。你的任务是分析仓库 "{repo_name}" 最近 {days} 天的 PR 和 Issue 活动，生成一份清晰、有信息量的摘要，帮助技术负责人快速了解这个社区正在发生什么。
+
+**请使用中文输出。**
+
+## 输出格式要求
+
+请提供一个结构化的 Markdown 摘要，包含以下部分：
+
+### 1. 🔍 社区动态
+
+用 3-5 句话描述这个项目当前的整体方向。哪些方面获得了最多关注？是否有重要的新功能、架构变更或关键的 Bug 修复正在进行？给读者一个高层次的全景图，了解这个社区正在聚焦什么。
+
+### 2. 🔥 重要 PR（3-5 个）
+
+列出最重要的 Pull Request（已合并的优先，其次是有重要意义的开放 PR）。对于每一个：
+- 用一句话说明其价值或影响（不要简单重复 PR 标题）
+- 标注当前状态（已合并 / 开放 / 关闭）
+- 附上可点击的链接，格式为 [#编号](URL)
+
+### 3. 🐛 值得关注的 Issue（3-5 个）
+
+列出最值得关注的 Issue——特别是有活跃讨论、评论较多或带有重要标签的。对于每一个：
+- 用一句话说明这个 Issue 的内容及其重要性
+- 附上可点击的链接，格式为 [#编号](URL)
+
+### 4. 📊 活动统计
+
+简要列出统计数据。
+
+## 写作风格要求
+
+- **简洁且有信息量**：读者是忙碌的技术负责人，需要快速概览
+- **聚焦"是什么"和"为什么"**：正在做什么工作，为什么重要
+- **合并关联内容**：如果多个 PR/Issue 属于同一个功能或方向，可以归类说明
+- **使用无序列表（- 列表项）展示，不要使用 Markdown 表格**
+- **提到 PR 或 Issue 时务必使用 Markdown 链接格式 [#编号](URL)**
 
 统计数据:
 - PR 总数: {stats.get('total_prs', 0)} (合并: {stats.get('merged_prs', 0)}, 开放: {stats.get('open_prs', 0)}, 关闭: {stats.get('closed_prs', 0)})

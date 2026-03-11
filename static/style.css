@@ -1247,3 +1247,222 @@ kbd {
 .slack-reply-text {
   word-break: break-word;
 }
+
+/* ===== Slack Preview Modal ===== */
+
+.slack-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: modalFadeIn 0.2s ease;
+}
+
+.slack-modal-overlay.hidden {
+  display: none;
+}
+
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.slack-modal {
+  background: #fff;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 780px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  animation: modalSlideUp 0.25s ease;
+}
+
+@keyframes modalSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.slack-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.slack-modal-header h3 {
+  font-size: 1.15rem;
+  color: #1a202c;
+  margin: 0;
+}
+
+.slack-modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #a0aec0;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  line-height: 1;
+  transition: all 0.15s;
+}
+
+.slack-modal-close:hover {
+  background: #f7fafc;
+  color: #4a5568;
+}
+
+.slack-modal-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.slack-preview-section {
+  margin-bottom: 20px;
+}
+
+.slack-preview-section:last-child {
+  margin-bottom: 0;
+}
+
+.slack-preview-label {
+  display: block;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #2d3748;
+  margin-bottom: 8px;
+}
+
+.slack-preview-hint {
+  font-weight: 400;
+  color: #a0aec0;
+  font-size: 0.82rem;
+}
+
+.slack-preview-textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #cbd5e0;
+  border-radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  resize: vertical;
+  color: #2d3748;
+  background: #f7fafc;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.slack-preview-textarea:focus {
+  outline: none;
+  border-color: #611f69;
+  box-shadow: 0 0 0 3px rgba(97, 31, 105, 0.12);
+  background: #fff;
+}
+
+
+/* Slack message render preview (styled like Slack) */
+.slack-message-preview {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 16px 20px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.92rem;
+  line-height: 1.65;
+  color: #1d1c1d;
+  max-height: 400px;
+  overflow-y: auto;
+  box-shadow: inset 0 0 0 1px rgba(29, 28, 29, 0.04);
+}
+
+.slack-message-preview .slack-preview-header {
+  font-weight: 900;
+  font-size: 1rem;
+  color: #1d1c1d;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.slack-message-preview .slack-preview-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.slack-message-preview .slack-preview-divider {
+  border: none;
+  border-top: 1px solid #e8e8e8;
+  margin: 12px 0;
+}
+
+.slack-message-preview .slack-preview-poll-header {
+  font-weight: 900;
+  font-size: 0.95rem;
+  color: #1d1c1d;
+  margin: 12px 0 8px;
+}
+
+.slack-message-preview .slack-preview-poll-item {
+  padding: 6px 0;
+  color: #1d1c1d;
+}
+
+.slack-message-preview .slack-preview-poll-hint {
+  font-size: 0.82rem;
+  color: #616061;
+  margin-top: 8px;
+}
+
+.slack-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px;
+  border-top: 1px solid #e2e8f0;
+  background: #f7fafc;
+  border-radius: 0 0 12px 12px;
+}
+
+.slack-modal-send {
+  padding: 10px 28px !important;
+  font-size: 0.95rem !important;
+  font-weight: 600;
+}
+
+/* Scrollbar for modal body */
+.slack-modal-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.slack-modal-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.slack-modal-body::-webkit-scrollbar-thumb {
+  background: #cbd5e0;
+  border-radius: 3px;
+}
+
+.slack-modal-body::-webkit-scrollbar-thumb:hover {
+  background: #a0aec0;
+}
