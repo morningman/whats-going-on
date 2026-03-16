@@ -926,6 +926,28 @@ def api_github_digest():
         return jsonify({"error": str(e)}), 500
 
 
+# --- LinkedIn Post from GitHub Summary ---
+
+
+@app.route("/api/github/linkedin-post", methods=["POST"])
+def api_github_linkedin_post():
+    """Generate a LinkedIn post from an existing GitHub summary."""
+    data = request.get_json()
+    if not data or not data.get("summary"):
+        return jsonify({"error": "summary is required"}), 400
+
+    config = load_config()
+    llm_config = config.get("llm", {})
+
+    logger.info("POST /api/github/linkedin-post — summary_len=%d", len(data["summary"]))
+    try:
+        result = summarizer.generate_linkedin_post(data["summary"], llm_config)
+        return jsonify({"ok": True, "post": result["post"], "generated_at": result["generated_at"]})
+    except Exception as e:
+        logger.exception("POST /api/github/linkedin-post — error")
+        return jsonify({"error": str(e)}), 500
+
+
 # --- GitHub SSE streaming endpoints ---
 
 
@@ -1463,16 +1485,16 @@ def api_feishu_create_batch_docs():
         svc = FeishuDocService()
         token = svc._get_tenant_access_token(app_id, app_secret)
 
-        # Create date-range subfolder
-        date_folder_token = svc.ensure_folder_path(token, folder_token, [date_range])
+        # Ensure "github" subfolder exists (all batch docs go here)
+        github_folder_token = svc.ensure_folder_path(token, folder_token, ["github"])
 
         # Delete existing doc with same title
-        svc.delete_existing_doc(token, date_folder_token, doc_title)
+        svc.delete_existing_doc(token, github_folder_token, doc_title)
 
         # Create merged document
         result = svc.create_doc_from_markdown(
             app_id, app_secret, doc_title,
-            content, date_folder_token, owner_email,
+            content, github_folder_token, owner_email,
         )
         doc_url = result["doc_url"]
 
@@ -1481,7 +1503,7 @@ def api_feishu_create_batch_docs():
         try:
             resp = requests.post(
                 f"https://open.feishu.cn/open-apis/drive/v1/metas/batch_query",
-                json={"request_docs": [{"doc_token": date_folder_token, "doc_type": "folder"}],
+                json={"request_docs": [{"doc_token": github_folder_token, "doc_type": "folder"}],
                       "with_url": True},
                 headers=svc._auth_headers(token), timeout=15)
             metas = resp.json().get("data", {}).get("metas", [])
@@ -1489,12 +1511,12 @@ def api_feishu_create_batch_docs():
                 folder_url = metas[0].get("url", "")
         except Exception:
             pass
-        if not folder_url and date_folder_token:
-            folder_url = f"https://bcntnaqps5sg.feishu.cn/drive/folder/{date_folder_token}"
+        if not folder_url and github_folder_token:
+            folder_url = f"https://bcntnaqps5sg.feishu.cn/drive/folder/{github_folder_token}"
 
         # Set folder public readable
         try:
-            svc._set_public_readable(token, date_folder_token)
+            svc._set_public_readable(token, github_folder_token)
         except Exception:
             pass
 

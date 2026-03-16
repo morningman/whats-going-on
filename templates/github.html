@@ -35,6 +35,7 @@
         <button class="btn btn-sm btn-feishu hidden" id="btn-feishu-create-doc-gh" title="创建飞书文档并推送链接">📄
             创建飞书文档</button>
         <button class="btn btn-sm btn-slack hidden" id="btn-slack-push-gh" title="推送到 Slack">💬 推送到 Slack</button>
+        <button class="btn btn-sm btn-linkedin hidden" id="btn-linkedin-gh" title="Generate LinkedIn Post">🔗 Generate LinkedIn Post</button>
     </div>
     <div id="gh-digest-content" class="digest-content"></div>
 </div>
@@ -110,6 +111,26 @@
             <button class="btn btn-secondary" id="slack-modal-cancel">取消</button>
             <button class="btn btn-secondary" id="slack-modal-reset" title="恢复到原始内容">↩️ 重置</button>
             <button class="btn btn-slack slack-modal-send" id="slack-modal-send">🚀 发送到 Slack</button>
+        </div>
+    </div>
+</div>
+
+<!-- LinkedIn Preview Modal -->
+<div id="linkedin-preview-modal" class="slack-modal-overlay hidden">
+    <div class="slack-modal">
+        <div class="slack-modal-header">
+            <h3>🔗 LinkedIn Post Preview</h3>
+            <button class="slack-modal-close" id="linkedin-modal-close">&times;</button>
+        </div>
+        <div class="slack-modal-body">
+            <div class="slack-preview-section">
+                <label class="slack-preview-label">📝 Edit Post <span class="slack-preview-hint">(you can edit before copying)</span></label>
+                <textarea id="linkedin-preview-textarea" class="slack-preview-textarea" rows="14"></textarea>
+            </div>
+        </div>
+        <div class="slack-modal-footer">
+            <button class="btn btn-secondary" id="linkedin-modal-cancel">Cancel</button>
+            <button class="btn btn-slack" id="linkedin-modal-copy">📋 Copy to Clipboard</button>
         </div>
     </div>
 </div>

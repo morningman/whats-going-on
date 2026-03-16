@@ -954,6 +954,83 @@ def generate_github_digest(
     return digest
 
 
+# --- LinkedIn Post Generation ---
+
+
+def _build_linkedin_prompt(summary_text: str) -> str:
+    """Build the prompt for generating a LinkedIn post from a Doris summary."""
+    return f"""You are a senior technical content strategist for the Apache Doris open-source community. Transform the following weekly GitHub activity summary into a short, engaging LinkedIn post that highlights interesting community progress and attracts developers and users.
+
+## Input Summary
+
+{summary_text}
+
+## Output Requirements
+
+Write a **LinkedIn post in English** (150–250 words) following these rules:
+
+### Content
+- Pick **2–3 highlight features only** — the most interesting or exciting ones
+- For each highlight, write **one sentence** explaining what it enables for users or developers
+- Skip bug fixes, crash fixes, stability patches — focus on new capabilities and features
+- Do NOT include statistics (PR counts, merge counts, etc.)
+- After each highlight's description, append the most relevant PR link on its own line, format: 🔗 https://github.com/apache/doris/pull/XXXXX
+- Connect highlights to real-world use cases when possible (e.g., RAG, log analytics, lakehouse, AI agents)
+
+### Structure
+- **Hook** (1–2 lines): A specific, intriguing opening — question, bold claim, or surprising insight. Do NOT start with "Exciting week" or similar generic openers
+- **Highlights** (2–3 short paragraphs): One feature per paragraph, each with a one-liner on what it does and why it matters
+- **Closing** (1–2 lines): Forward-looking or invite community participation. Keep it genuine
+- **Hashtags**: 3–5 at the end
+
+### Tone & Style
+- Like a respected community member sharing what's interesting — not a press release
+- Confident, warm, concise
+- Avoid: "thrilled", "game-changing", "revolutionary", "proud to announce", "leveraging"
+- Use line breaks for readability
+- Emojis: 0–2 total, tasteful
+
+## Doris Core Directions (for prioritization)
+
+1. **Columnar JSON / Variant Type** — Semi-structured data analytics
+2. **Hybrid Search** — Full-text + vector search for RAG
+3. **Multimodal Data & Open Lakehouse** — Lance, Iceberg, Paimon integration
+4. **Semantic Layer & MCP Protocol** — AI Agents + natural language data interaction
+5. **AI SQL** — LLM invocation within SQL
+
+Output ONLY the LinkedIn post text, nothing else."""
+
+
+def generate_linkedin_post(summary_text: str, llm_config: dict) -> dict:
+    """Generate a LinkedIn post from an existing GitHub summary.
+
+    Args:
+        summary_text: The Markdown summary text (from a Doris GitHub digest).
+        llm_config: The full 'llm' section from config.
+
+    Returns {"post": str, "generated_at": str}
+    """
+    if not summary_text or not summary_text.strip():
+        return {"post": "", "generated_at": ""}
+
+    provider = _get_active_provider(llm_config)
+    prompt = _build_linkedin_prompt(summary_text)
+
+    logger.info("Generating LinkedIn post — prompt_len=%d", len(prompt))
+    try:
+        post_text = _call_llm(prompt, provider)
+    except Exception:
+        logger.exception("LinkedIn post generation failed")
+        raise
+
+    result = {
+        "post": post_text.strip(),
+        "generated_at": datetime.now().isoformat(),
+    }
+    logger.info("LinkedIn post generated — len=%d", len(result["post"]))
+    return result
+
+
 # --- Slack Digest ---
 
 

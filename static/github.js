@@ -443,11 +443,21 @@ async function viewHistorySummary(filename) {
 const btnFeishuPushGh = document.getElementById('btn-feishu-push-gh');
 const btnFeishuCreateDocGh = document.getElementById('btn-feishu-create-doc-gh');
 const btnSlackPushGh = document.getElementById('btn-slack-push-gh');
+const btnLinkedInGh = document.getElementById('btn-linkedin-gh');
 
 function showPushButtons() {
     if (btnFeishuPushGh) btnFeishuPushGh.classList.remove('hidden');
     if (btnFeishuCreateDocGh) btnFeishuCreateDocGh.classList.remove('hidden');
     if (btnSlackPushGh) btnSlackPushGh.classList.remove('hidden');
+    // Show LinkedIn button only for Doris repos
+    if (btnLinkedInGh) {
+        const repoName = repoSelect.options[repoSelect.selectedIndex]?.textContent || '';
+        if (repoName.toLowerCase().includes('doris')) {
+            btnLinkedInGh.classList.remove('hidden');
+        } else {
+            btnLinkedInGh.classList.add('hidden');
+        }
+    }
 }
 
 if (btnFeishuPushGh) {
@@ -901,6 +911,86 @@ if (btnPushToGroup) btnPushToGroup.addEventListener('click', async function () {
         btnPushToGroup.textContent = '🐦 推送到飞书群';
     }
 });
+
+// --- LinkedIn Post Generation ---
+
+const linkedinModal = document.getElementById('linkedin-preview-modal');
+const linkedinModalClose = document.getElementById('linkedin-modal-close');
+const linkedinModalCancel = document.getElementById('linkedin-modal-cancel');
+const linkedinModalCopy = document.getElementById('linkedin-modal-copy');
+const linkedinTextarea = document.getElementById('linkedin-preview-textarea');
+
+function openLinkedinModal() {
+    linkedinModal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeLinkedinModal() {
+    linkedinModal.classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+if (linkedinModalClose) linkedinModalClose.addEventListener('click', closeLinkedinModal);
+if (linkedinModalCancel) linkedinModalCancel.addEventListener('click', closeLinkedinModal);
+if (linkedinModal) {
+    linkedinModal.addEventListener('click', function (e) {
+        if (e.target === linkedinModal) closeLinkedinModal();
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !linkedinModal.classList.contains('hidden')) {
+            closeLinkedinModal();
+        }
+    });
+}
+
+// Copy button
+if (linkedinModalCopy) {
+    linkedinModalCopy.addEventListener('click', async function () {
+        const text = linkedinTextarea.value;
+        try {
+            await navigator.clipboard.writeText(text);
+            linkedinModalCopy.textContent = '✅ Copied!';
+            setTimeout(() => { linkedinModalCopy.textContent = '📋 Copy to Clipboard'; }, 2000);
+        } catch {
+            // Fallback for older browsers
+            linkedinTextarea.select();
+            document.execCommand('copy');
+            linkedinModalCopy.textContent = '✅ Copied!';
+            setTimeout(() => { linkedinModalCopy.textContent = '📋 Copy to Clipboard'; }, 2000);
+        }
+    });
+}
+
+// LinkedIn button click — call API, then open modal
+if (btnLinkedInGh) {
+    btnLinkedInGh.addEventListener('click', async function () {
+        if (!lastGhSummary) {
+            showGhStatus('没有可用的摘要内容', 'error');
+            return;
+        }
+        btnLinkedInGh.disabled = true;
+        btnLinkedInGh.innerHTML = '<span class="spinner"></span>Generating...';
+        try {
+            const resp = await fetch('/api/github/linkedin-post', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ summary: lastGhSummary }),
+            });
+            const result = await resp.json();
+            if (result.ok && result.post) {
+                linkedinTextarea.value = result.post;
+                openLinkedinModal();
+            } else {
+                showGhStatus('LinkedIn post 生成失败: ' + (result.error || ''), 'error');
+            }
+        } catch (e) {
+            showGhStatus('LinkedIn post 生成失败: ' + e.message, 'error');
+        } finally {
+            btnLinkedInGh.disabled = false;
+            btnLinkedInGh.textContent = '🔗 Generate LinkedIn Post';
+        }
+    });
+}
 
 // Init
 loadRepos();

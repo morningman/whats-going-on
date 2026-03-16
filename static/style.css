@@ -465,12 +465,39 @@ header nav a.active {
   box-shadow: none;
 }
 
+/* LinkedIn post button */
+.btn-linkedin {
+  background: linear-gradient(135deg, #0077b5 0%, #005f8d 100%);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 6px rgba(0, 119, 181, 0.25);
+  white-space: nowrap;
+}
+
+.btn-linkedin:hover {
+  background: linear-gradient(135deg, #005f8d 0%, #004a70 100%);
+  box-shadow: 0 3px 10px rgba(0, 119, 181, 0.35);
+  transform: translateY(-1px);
+}
+
+.btn-linkedin:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
 /* Digest header — flex row for title + push button */
 .digest-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .digest-header h2 {
