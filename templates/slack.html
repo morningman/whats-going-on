@@ -15,6 +15,7 @@
         <option value="">-- 选择频道 --</option>
     </select>
     <div class="ds-range-selector" id="slack-range-selector">
+        <button class="ds-range-btn" data-range="yesterday">昨天</button>
         <button class="ds-range-btn active" data-days="3">最近 3 天</button>
         <button class="ds-range-btn" data-days="7">最近 7 天</button>
         <button class="ds-range-btn" data-range="last-week">上一周</button>
@@ -24,16 +25,22 @@
         <button class="ds-range-btn" data-lang="en">English</button>
     </div>
     <button class="btn btn-daily-summary" id="btn-slack-run">加载并生成摘要</button>
+    <button class="btn btn-daily-summary" id="btn-workspace-digest" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">📋 全频道日报</button>
 </div>
 
 <div id="slack-status" class="status hidden"></div>
 <div id="slack-progress-log" class="progress-log hidden"></div>
 
+<div id="ws-channel-stats" class="card hidden">
+    <h3>📊 频道消息统计</h3>
+    <div id="ws-channel-stats-list" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;"></div>
+</div>
+
 <div id="slack-digest-section" class="card hidden">
     <div class="digest-header">
         <h2 id="slack-digest-title">📊 频道讨论摘要</h2>
-        <button class="btn btn-sm btn-feishu hidden" id="btn-feishu-push-slack" title="推送到飞书">🐦 推送到飞书</button>
-        <button class="btn btn-sm btn-slack hidden" id="btn-slack-push-slack" title="推送到 Slack">💬 推送到 Slack</button>
+        <button class="btn btn-sm btn-secondary hidden" id="btn-copy-markdown" title="复制 Markdown">📋 复制 Markdown</button>
+        <button class="btn btn-sm hidden" id="btn-push-digest-channel" style="background:#4A154B;color:#fff;" title="推送到 #slack-summary">📨 推送到 #slack-summary</button>
     </div>
     <div id="slack-digest-content" class="digest-content"></div>
 </div>

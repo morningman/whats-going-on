@@ -1654,6 +1654,133 @@ def api_slack_push():
         return jsonify({"ok": False, "message": f"推送失败: {str(e)}"})
 
 
+@app.route("/api/slack/push-digest", methods=["POST"])
+def api_slack_push_digest():
+    """Push digest to a specific Slack channel using Bot Token + chat.postMessage API."""
+    data = request.get_json()
+    if not data or not data.get("content"):
+        return jsonify({"ok": False, "message": "推送内容不能为空"}), 400
+
+    workspace_id = data.get("workspace_id", "")
+    if not workspace_id:
+        return jsonify({"ok": False, "message": "缺少 workspace_id"}), 400
+
+    config = load_config()
+    workspaces = config.get("slack", {}).get("workspaces", [])
+    ws = None
+    for w in workspaces:
+        if w["id"] == workspace_id:
+            ws = w
+            break
+    if not ws:
+        return jsonify({"ok": False, "message": f"Workspace '{workspace_id}' 未找到"}), 400
+
+    bot_token = ws.get("bot_token", "")
+    if not bot_token:
+        return jsonify({"ok": False, "message": "Bot Token 未配置。请在 config.json 中配置 bot_token。"}), 400
+
+    digest_channel = ws.get("digest_channel", "")
+    if not digest_channel:
+        return jsonify({"ok": False, "message": "目标频道未配置。请在 config.json 中配置 digest_channel。"}), 400
+
+    content = data["content"]
+    title = data.get("title", "Workspace Daily Digest")
+
+    logger.info("POST /api/slack/push-digest — ws=%s, channel=%s, title=%s, len=%d",
+                workspace_id, digest_channel, title, len(content))
+
+    try:
+        # Step 1: Resolve channel ID
+        # If digest_channel looks like a channel ID (starts with C), use directly
+        if digest_channel.startswith("C"):
+            channel_id = digest_channel
+        else:
+            # Look up channel ID by name via conversations.list
+            channel_id = None
+            cursor = ""
+            for _ in range(10):  # Max 10 pages
+                list_url = "https://slack.com/api/conversations.list"
+                params = {
+                    "types": "public_channel,private_channel",
+                    "limit": 200,
+                    "exclude_archived": "true",
+                }
+                if cursor:
+                    params["cursor"] = cursor
+                resp = http_requests.get(
+                    list_url,
+                    headers={"Authorization": f"Bearer {bot_token}"},
+                    params=params,
+                    timeout=10,
+                )
+                resp_data = resp.json()
+                if not resp_data.get("ok"):
+                    error = resp_data.get("error", "unknown")
+                    logger.warning("conversations.list failed: %s", error)
+                    return jsonify({"ok": False, "message": f"无法列出频道: {error}"}), 500
+
+                for ch in resp_data.get("channels", []):
+                    if ch["name"] == digest_channel:
+                        channel_id = ch["id"]
+                        break
+                if channel_id:
+                    break
+                cursor = resp_data.get("response_metadata", {}).get("next_cursor", "")
+                if not cursor:
+                    break
+
+            if not channel_id:
+                return jsonify({
+                    "ok": False,
+                    "message": f"未找到频道 #{digest_channel}。请确认: 1) 频道存在 2) Bot 已加入该频道"
+                }), 404
+
+        # Step 2: Build blocks and post
+        blocks = _markdown_to_slack_blocks(content, title)
+
+        # Slack chat.postMessage has a 50-block limit; split into multiple messages if needed
+        max_blocks_per_msg = 48  # leave room for header
+        block_chunks = []
+        for i in range(0, len(blocks), max_blocks_per_msg):
+            block_chunks.append(blocks[i:i + max_blocks_per_msg])
+
+        for i, chunk in enumerate(block_chunks):
+            post_url = "https://slack.com/api/chat.postMessage"
+            payload = {
+                "channel": channel_id,
+                "blocks": chunk,
+                "unfurl_links": False,
+                "unfurl_media": False,
+            }
+            # Only set text fallback on first message
+            if i == 0:
+                payload["text"] = title
+
+            resp = http_requests.post(
+                post_url,
+                headers={
+                    "Authorization": f"Bearer {bot_token}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=15,
+            )
+            resp_data = resp.json()
+            if not resp_data.get("ok"):
+                error = resp_data.get("error", "unknown")
+                logger.warning("chat.postMessage failed: %s", error)
+                return jsonify({"ok": False, "message": f"发送失败: {error}"}), 500
+
+        logger.info("POST /api/slack/push-digest — success, sent %d message(s)", len(block_chunks))
+        return jsonify({"ok": True, "message": f"推送成功！日报已发送到 #{digest_channel}。"})
+
+    except http_requests.exceptions.Timeout:
+        return jsonify({"ok": False, "message": "请求 Slack API 超时"}), 500
+    except Exception as e:
+        logger.exception("POST /api/slack/push-digest — error")
+        return jsonify({"ok": False, "message": f"推送失败: {str(e)}"}), 500
+
+
 # --- Slack API ---
 
 @app.route("/api/slack/status")
@@ -1892,6 +2019,217 @@ def api_slack_digest_stream():
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+
+@app.route("/api/slack/workspace-digest/stream")
+def api_slack_workspace_digest_stream():
+    """SSE endpoint: stream progress while generating workspace-wide daily digest."""
+    workspace_id = request.args.get("workspace_id", "")
+    start_date = request.args.get("start_date", "")
+    end_date = request.args.get("end_date", "")
+    try:
+        days = int(request.args.get("days", "1"))
+    except ValueError:
+        days = 1
+    lang = request.args.get("lang", "zh")
+    if lang not in ("zh", "en"):
+        lang = "zh"
+
+    if not workspace_id:
+        def err_gen():
+            yield _sse_event({"type": "error", "message": "workspace_id is required"})
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    config = load_config()
+    workspaces = config.get("slack", {}).get("workspaces", [])
+    ws = None
+    for w in workspaces:
+        if w["id"] == workspace_id:
+            ws = w
+            break
+    if not ws:
+        def err_gen():
+            yield _sse_event({"type": "error", "message": f"Workspace '{workspace_id}' not found"})
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    token = ws.get("token", "")
+    if not token:
+        def err_gen():
+            yield _sse_event({"type": "error", "message": "Slack token not configured"})
+        return Response(err_gen(), mimetype="text/event-stream")
+
+    workspace_name = ws.get("name", workspace_id)
+
+    # Compute effective dates
+    if start_date and end_date:
+        try:
+            sd = datetime.strptime(start_date, "%Y-%m-%d")
+            ed = datetime.strptime(end_date, "%Y-%m-%d")
+            days = (ed - sd).days + 1
+        except ValueError:
+            start_date = ""
+            end_date = ""
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    range_label = f"{start_date}__{end_date}" if start_date else f"{days}d"
+    cache_key = f"ws__{workspace_id}__{today}__{range_label}"
+
+    logger.info("SSE /api/slack/workspace-digest/stream — ws=%s (%s), days=%d",
+                workspace_id, workspace_name, days)
+
+    q = queue.Queue()
+
+    def progress_cb(event_type, message, **kwargs):
+        event = {"type": event_type, "message": message}
+        event.update(kwargs)
+        q.put(event)
+
+    def worker():
+        try:
+            # Compute date list
+            if start_date and end_date:
+                sd = datetime.strptime(start_date, "%Y-%m-%d")
+                ed = datetime.strptime(end_date, "%Y-%m-%d")
+            else:
+                ed = datetime.now()
+                sd = ed - timedelta(days=days - 1)
+            date_list = []
+            cur = sd
+            while cur <= ed:
+                date_list.append(cur.strftime("%Y-%m-%d"))
+                cur += timedelta(days=1)
+
+            date_range_label = f"{date_list[0]} ~ {date_list[-1]}"
+
+            # Step 1: Fetch all channels
+            q.put({"type": "progress", "message": f"正在获取 {workspace_name} 的频道列表..."})
+            from sources.slack import SlackSource
+            slack = SlackSource()
+            channels = slack.fetch_channels(token, progress_cb=progress_cb)
+            q.put({"type": "progress", "message": f"找到 {len(channels)} 个频道，开始获取消息..."})
+
+            # Step 2: For each channel, fetch messages (with caching)
+            channel_messages: dict[str, list[dict]] = {}
+            total_fetched = 0
+            skipped_empty = 0
+
+            for i, ch in enumerate(channels, 1):
+                ch_id = ch["id"]
+                ch_name = ch.get("name", ch_id)
+                channel_key = f"{workspace_id}__{ch_id}"
+
+                q.put({
+                    "type": "progress",
+                    "message": f"正在获取 #{ch_name} ({i}/{len(channels)})...",
+                    "step": "fetch_channel",
+                    "detail": f"已获取 {total_fetched} 条消息",
+                })
+
+                # Check cache for each date
+                cached_data, missing_dates = cache.load_slack_cache_range(channel_key, date_list)
+
+                # Fetch missing dates
+                fetched_messages = []
+                if missing_dates:
+                    try:
+                        fetch_since = min(missing_dates)
+                        fetch_until = max(missing_dates)
+                        fetched_messages = slack.fetch_messages(
+                            token, ch_id, days=len(missing_dates),
+                            since_date=fetch_since,
+                            until_date=fetch_until,
+                        )
+                        # Save to cache
+                        cache.save_slack_cache_days(channel_key, fetched_messages)
+                    except Exception as e:
+                        logger.warning("Failed to fetch messages for #%s: %s", ch_name, e)
+                        q.put({
+                            "type": "progress",
+                            "message": f"⚠️ 获取 #{ch_name} 消息失败: {e}",
+                            "step": "fetch_error",
+                        })
+                        continue
+
+                # Merge cached + fetched
+                all_msgs = []
+                for day_msgs in cached_data.values():
+                    all_msgs.extend(day_msgs)
+                all_msgs.extend(fetched_messages)
+
+                # Deduplicate
+                seen_ts = set()
+                deduped = []
+                for msg in all_msgs:
+                    if msg.get("ts") and msg["ts"] not in seen_ts:
+                        seen_ts.add(msg["ts"])
+                        deduped.append(msg)
+                deduped.sort(key=lambda m: m.get("ts", ""))
+
+                if deduped:
+                    channel_messages[ch_name] = deduped
+                    total_fetched += len(deduped)
+                else:
+                    skipped_empty += 1
+
+            active_channels = len(channel_messages)
+            q.put({
+                "type": "progress",
+                "message": (
+                    f"消息获取完成: {active_channels} 个活跃频道, "
+                    f"{total_fetched} 条消息 (跳过 {skipped_empty} 个空频道)"
+                ),
+                "step": "fetch_done",
+            })
+
+            # Emit channel stats so frontend can display them
+            channel_stats = []
+            for ch_name, msgs in sorted(channel_messages.items(),
+                                         key=lambda x: len(x[1]), reverse=True):
+                channel_stats.append({
+                    "name": ch_name,
+                    "message_count": len(msgs),
+                    "thread_count": sum(1 for m in msgs if m.get("thread_reply_count", 0) > 0),
+                })
+            q.put({"type": "channels_loaded", "data": {
+                "channels": channel_stats,
+                "total_messages": total_fetched,
+                "active_channels": active_channels,
+                "skipped_empty": skipped_empty,
+            }})
+
+            # Step 3: Generate workspace digest
+            llm_config = config.get("llm", {})
+            digest = summarizer.generate_slack_workspace_digest(
+                channel_messages,
+                workspace_id,
+                workspace_name,
+                date_range_label,
+                llm_config,
+                cache_key,
+                progress_cb=progress_cb,
+                force=True,
+                lang=lang,
+            )
+            q.put({"type": "done", "data": digest})
+        except Exception as e:
+            logger.exception("SSE /api/slack/workspace-digest/stream — error")
+            q.put({"type": "error", "message": str(e)})
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+
+    def generate():
+        while True:
+            try:
+                event = q.get(timeout=600)  # 10 min timeout for multi-channel
+            except queue.Empty:
+                yield _sse_event({"type": "error", "message": "操作超时 (10 分钟)"})
+                return
+            yield _sse_event(event)
+            if event["type"] in ("done", "error"):
+                return
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # --- Helpers ---

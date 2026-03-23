@@ -1225,6 +1225,364 @@ def generate_slack_digest(
     return digest
 
 
+# --- Slack Workspace Digest (all channels) ---
+
+
+def _build_slack_workspace_prompt(
+    channel_messages: dict[str, list[dict]],
+    workspace_name: str,
+    date_range: str,
+    lang: str = "zh",
+) -> str:
+    """Build the prompt for workspace-wide multi-channel digest.
+
+    Args:
+        channel_messages: {channel_name: [messages]} — only channels with messages
+        workspace_name: display name of the workspace
+        date_range: human-readable range like "2026-03-22 ~ 2026-03-23"
+        lang: output language
+    """
+    sections = ""
+    total_msgs = 0
+    for ch_name in sorted(channel_messages.keys()):
+        msgs = channel_messages[ch_name]
+        total_msgs += len(msgs)
+        threaded = sum(1 for m in msgs if m.get("thread_reply_count", 0) > 0)
+        sections += f"\n## #{ch_name} ({len(msgs)} messages, {threaded} threads)\n"
+        for msg in msgs:
+            text = msg.get("text", "")[:1200]
+            user = msg.get("user", "unknown")
+            reactions = " ".join(msg.get("reactions", []))
+            reaction_text = f"  [Reactions: {reactions}]" if reactions else ""
+            thread_count = msg.get("thread_reply_count", 0)
+            thread_text = f"  [Thread: {thread_count} replies]" if thread_count else ""
+            sections += f"\n- **{user}**: {text}{reaction_text}{thread_text}\n"
+            for reply in msg.get("replies_preview", []):
+                reply_text = reply.get("text", "")[:400]
+                reply_user = reply.get("user", "unknown")
+                sections += f"  - ↳ **{reply_user}**: {reply_text}\n"
+
+    active_channels = len(channel_messages)
+
+    if lang == "en":
+        return f"""You are a Slack workspace daily digest assistant. Analyze ALL the following messages from the Slack workspace "{workspace_name}" during {date_range}.
+
+**Please output in English.**
+
+Provide a structured Markdown report with these sections:
+
+### 1. Executive Summary
+2-4 sentences: What were the most important topics discussed across the workspace today? Any decisions made or issues raised that need attention?
+
+### 2. Topics Needing Attention / Reply
+List topics or questions that appear to need a response or decision from leadership. For each:
+- Which channel and who raised it (use their Slack username)
+- What the topic/question is
+- Why it needs attention
+
+### 3. Detailed Channel Summaries
+For EACH active channel, create a dedicated subsection:
+
+#### #channel_name
+- **Overview**: 2-3 sentences summarizing the overall activity in this channel.
+- **Discussion Threads**: For each meaningful discussion thread or topic:
+  - Summarize the discussion topic
+  - List who participated by their Slack usernames (e.g. @alice, @bob)
+  - What was discussed or decided
+  - Whether it needs follow-up
+- Skip trivial messages (greetings, bot notifications, etc.)
+
+### 4. Activity Overview
+- Total messages: {total_msgs}
+- Active channels: {active_channels}
+- Time range: {date_range}
+
+**Writing style:**
+- Be thorough for each channel — this is the primary content of the digest
+- Always mention specific Slack usernames when describing who said what
+- Summarize each discussion thread separately, do not merge different threads
+- Use bullet lists, not tables
+- Do NOT use any emoji in the output
+
+---
+{sections}"""
+    else:
+        return f"""你是一个 Slack 工作区日报助手。请对以下来自 Slack 工作区 "{workspace_name}" 在 {date_range} 期间的所有频道消息进行分析和汇总。
+
+**请使用中文输出。**
+
+请提供一个结构化的 Markdown 日报，包含以下部分：
+
+### 1. 要点总结
+用 2-4 句话概括：今天工作区中讨论了哪些最重要的话题？是否有需要关注的决策或问题？
+
+### 2. 需要关注 / 回复的话题
+列出需要回复或需要决策的话题或问题。对于每个话题：
+- 在哪个频道、谁提出的（使用 Slack 用户名）
+- 话题/问题是什么
+- 为什么需要关注
+
+### 3. 各频道详细摘要
+对**每个**活跃频道，创建一个独立的子章节：
+
+#### #频道名
+- **概述**: 用 2-3 句话总结这个频道的整体活动。
+- **讨论串**: 对每一个有意义的讨论串或话题：
+  - 概述讨论的主题
+  - 列出参与讨论的人的 Slack 用户名（如 @alice, @bob）
+  - 讨论了什么内容，做出了什么决策
+  - 是否需要后续跟进
+- 跳过无意义消息（问候、bot 通知等）
+
+### 4. 活动概览
+- 消息总数: {total_msgs}
+- 活跃频道数: {active_channels}
+- 时间范围: {date_range}
+
+**写作风格要求：**
+- 每个频道的摘要要详细、全面——这是日报的核心内容
+- 描述讨论内容时，必须指出具体的 Slack 用户名
+- 每个讨论串单独总结，不要将不同的讨论串合并
+- 使用无序列表，不使用表格
+- 不要使用任何 emoji 符号
+
+---
+{sections}"""
+
+
+def _build_slack_workspace_merge_prompt(
+    per_channel_summaries: dict[str, str],
+    workspace_name: str,
+    date_range: str,
+    total_msgs: int,
+    lang: str = "zh",
+) -> str:
+    """Build a merge prompt from pre-generated per-channel summaries."""
+    sections = ""
+    for ch_name, summary in sorted(per_channel_summaries.items()):
+        sections += f"\n## #{ch_name}\n{summary}\n"
+
+    active_channels = len(per_channel_summaries)
+
+    if lang == "en":
+        return f"""You are a Slack workspace daily digest editor. Below are individual summaries for each channel in the workspace "{workspace_name}" during {date_range}.
+
+Your task: merge these into a single cohesive daily digest. Keep the per-channel detail — do NOT over-condense.
+
+**Please output in English.**
+
+### 1. Executive Summary
+2-4 sentences covering the most important topics across ALL channels.
+
+### 2. Topics Needing Attention / Reply
+Cross-channel view: which topics need a response or decision? Mention specific Slack usernames.
+
+### 3. Detailed Channel Summaries
+Keep each channel as its own subsection (#### #channel_name). Preserve the thread-level detail and participant names from the individual summaries.
+
+### 4. Activity Overview
+- Total messages: {total_msgs}
+- Active channels: {active_channels}
+- Time range: {date_range}
+
+Do NOT use any emoji in the output. Always mention Slack usernames.
+
+---
+{sections}"""
+    else:
+        return f"""你是一个 Slack 工作区日报编辑。以下是工作区 "{workspace_name}" 在 {date_range} 期间各频道的独立摘要。
+
+你的任务：将它们合并为一份完整的日报。保留每个频道的详细内容，**不要**过度精简。
+
+**请使用中文输出。**
+
+### 1. 要点总结
+用 2-4 句话概括所有频道中最重要的话题。
+
+### 2. 需要关注 / 回复的话题
+跨频道视角：哪些话题需要回复或决策？必须指出具体的 Slack 用户名。
+
+### 3. 各频道详细摘要
+保留每个频道作为独立子章节（#### #频道名）。保留各独立摘要中的讨论串详情和参与者用户名。
+
+### 4. 活动概览
+- 消息总数: {total_msgs}
+- 活跃频道数: {active_channels}
+- 时间范围: {date_range}
+
+不要使用任何 emoji 符号。必须保留 Slack 用户名。
+
+---
+{sections}"""
+
+
+WORKSPACE_DIGEST_DIR = os.path.join(os.path.dirname(__file__), "data", "workspace_digests")
+
+
+def _workspace_digest_cache_path(workspace_id: str, cache_key: str) -> str:
+    os.makedirs(WORKSPACE_DIGEST_DIR, exist_ok=True)
+    return os.path.join(WORKSPACE_DIGEST_DIR, f"{cache_key}.json")
+
+
+def generate_slack_workspace_digest(
+    channel_messages: dict[str, list[dict]],
+    workspace_id: str,
+    workspace_name: str,
+    date_range: str,
+    llm_config: dict,
+    cache_key: str,
+    progress_cb=None,
+    force: bool = False,
+    lang: str = "zh",
+) -> dict:
+    """Generate an AI digest for all channels in a Slack workspace.
+
+    Args:
+        channel_messages: {channel_name: [messages]} — only non-empty channels
+        workspace_id: workspace identifier
+        workspace_name: display name
+        date_range: e.g. "2026-03-22 ~ 2026-03-23"
+        llm_config: the 'llm' config section
+        cache_key: for caching the result
+        progress_cb: SSE progress callback
+        force: skip cache if True
+        lang: output language
+
+    Returns: {"summary": str, "generated_at": str, "stats": dict}
+    """
+    # Check cache
+    if not force:
+        cache_path = _workspace_digest_cache_path(workspace_id, cache_key)
+        if os.path.exists(cache_path):
+            if progress_cb:
+                progress_cb("progress", "找到缓存的工作区日报", step="cache_hit")
+            with open(cache_path, "r") as f:
+                return json.load(f)
+
+    # Compute stats
+    total_msgs = sum(len(msgs) for msgs in channel_messages.values())
+    active_channels = len(channel_messages)
+    stats = {
+        "total_messages": total_msgs,
+        "active_channels": active_channels,
+    }
+
+    if total_msgs == 0:
+        if progress_cb:
+            progress_cb("progress", "所有频道在所选时间范围内均无消息", step="no_messages")
+        return {
+            "summary": "在所选时间范围内，所有频道均无消息。",
+            "generated_at": "",
+            "stats": stats,
+        }
+
+    provider = _get_active_provider(llm_config)
+
+    # Decide strategy: single-pass vs two-pass
+    if total_msgs <= 500 and active_channels <= 15:
+        # Single-pass: send all messages to LLM at once
+        if progress_cb:
+            progress_cb(
+                "progress",
+                f"正在构建提示词 ({active_channels} 个频道, {total_msgs} 条消息)...",
+                step="build_prompt",
+            )
+        prompt = _build_slack_workspace_prompt(
+            channel_messages, workspace_name, date_range, lang
+        )
+
+        if progress_cb:
+            provider_name = provider.get("name", provider.get("id", "unknown"))
+            model = provider.get("model", "unknown")
+            progress_cb(
+                "progress",
+                f"正在调用 LLM ({provider_name} / {model}) 生成日报...",
+                step="llm_call",
+            )
+
+        try:
+            summary_text = _call_llm(prompt, provider)
+        except Exception as e:
+            if progress_cb:
+                progress_cb("error", f"LLM 调用失败: {e}")
+            raise
+    else:
+        # Two-pass: per-channel summaries first, then merge
+        if progress_cb:
+            progress_cb(
+                "progress",
+                f"消息量较大 ({total_msgs} 条)，将分频道生成摘要后合并...",
+                step="two_pass_start",
+            )
+
+        per_channel_summaries = {}
+        for i, (ch_name, msgs) in enumerate(sorted(channel_messages.items()), 1):
+            if progress_cb:
+                progress_cb(
+                    "progress",
+                    f"正在生成 #{ch_name} 的摘要 ({i}/{active_channels})...",
+                    step="per_channel_llm",
+                )
+            try:
+                ch_prompt = _build_slack_prompt(
+                    msgs, ch_name, days=1, lang=lang, date_range=date_range
+                )
+                ch_summary = _call_llm(ch_prompt, provider)
+                per_channel_summaries[ch_name] = ch_summary
+            except Exception as e:
+                logger.warning("Failed to generate summary for #%s: %s", ch_name, e)
+                per_channel_summaries[ch_name] = f"（摘要生成失败: {e}）"
+
+        # Merge pass
+        if progress_cb:
+            progress_cb("progress", "正在合并各频道摘要为日报...", step="merge_llm")
+
+        merge_prompt = _build_slack_workspace_merge_prompt(
+            per_channel_summaries, workspace_name, date_range, total_msgs, lang
+        )
+        try:
+            summary_text = _call_llm(merge_prompt, provider)
+        except Exception as e:
+            if progress_cb:
+                progress_cb("error", f"LLM 合并调用失败: {e}")
+            raise
+
+    if progress_cb:
+        progress_cb("progress", "日报生成完成，正在保存...", step="saving")
+
+    digest = {
+        "summary": summary_text,
+        "generated_at": datetime.now().isoformat(),
+        "stats": stats,
+    }
+
+    # Save cache
+    cache_path = _workspace_digest_cache_path(workspace_id, cache_key)
+    with open(cache_path, "w") as f:
+        json.dump(digest, f, ensure_ascii=False, indent=2)
+
+    # Export to Markdown
+    try:
+        content_date = datetime.now().strftime("%Y-%m-%d")
+        export_summary_markdown(
+            source_type="slack-workspace",
+            source_id=workspace_id,
+            content_date=content_date,
+            lang=lang,
+            summary_text=summary_text,
+            metadata={
+                "workspace_name": workspace_name,
+                "active_channels": active_channels,
+                "total_messages": total_msgs,
+            },
+        )
+    except Exception:
+        logger.exception("Failed to export workspace digest to Markdown")
+
+    logger.info("Workspace digest complete for %s", cache_key)
+    return digest
+
+
 # ---------------------------------------------------------------------------
 # Summary Markdown export & listing
 # ---------------------------------------------------------------------------

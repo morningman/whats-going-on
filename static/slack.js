@@ -53,6 +53,14 @@ function getLastWeekRange() {
     return { start: fmt(lastMonday), end: fmt(lastSunday) };
 }
 
+function getYesterdayRange() {
+    const now = new Date();
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    const fmt = d => d.toISOString().slice(0, 10);
+    return { start: fmt(yesterday), end: fmt(yesterday) };
+}
+
 // --- Status ---
 
 function showStatus(msg, type) {
@@ -108,6 +116,8 @@ slackRangeSelector.addEventListener('click', function (e) {
     btn.classList.add('active');
     if (btn.dataset.range === 'last-week') {
         selectedRange = 'last-week';
+    } else if (btn.dataset.range === 'yesterday') {
+        selectedRange = 'yesterday';
     } else {
         selectedRange = null;
         selectedDays = parseInt(btn.dataset.days, 10);
@@ -200,6 +210,9 @@ function runCombinedFlow() {
     if (selectedRange === 'last-week') {
         const range = getLastWeekRange();
         url = `/api/slack/digest/stream?workspace_id=${encodeURIComponent(wsId)}&channel_id=${encodeURIComponent(chId)}&start_date=${range.start}&end_date=${range.end}&lang=${selectedLang}`;
+    } else if (selectedRange === 'yesterday') {
+        const range = getYesterdayRange();
+        url = `/api/slack/digest/stream?workspace_id=${encodeURIComponent(wsId)}&channel_id=${encodeURIComponent(chId)}&start_date=${range.start}&end_date=${range.end}&lang=${selectedLang}`;
     } else {
         url = `/api/slack/digest/stream?workspace_id=${encodeURIComponent(wsId)}&channel_id=${encodeURIComponent(chId)}&days=${selectedDays}&lang=${selectedLang}`;
     }
@@ -237,6 +250,9 @@ function runCombinedFlow() {
             if (selectedRange === 'last-week') {
                 const range = getLastWeekRange();
                 dateRangeLabel = `${range.start} ~ ${range.end}`;
+            } else if (selectedRange === 'yesterday') {
+                const range = getYesterdayRange();
+                dateRangeLabel = `${range.start}`;
             } else {
                 const endDate = new Date();
                 const startDate = new Date();
@@ -345,38 +361,70 @@ function renderDigest(data, dateRangeLabel) {
     }
 }
 
-// --- Feishu Push ---
+// --- Action Buttons ---
 
-const btnFeishuPush = document.getElementById('btn-feishu-push-slack');
-const btnSlackPush = document.getElementById('btn-slack-push-slack');
+const btnCopyMarkdown = document.getElementById('btn-copy-markdown');
+const btnPushDigestChannel = document.getElementById('btn-push-digest-channel');
 
 function showPushButtons() {
-    if (btnFeishuPush) btnFeishuPush.classList.remove('hidden');
-    if (btnSlackPush) btnSlackPush.classList.remove('hidden');
+    if (btnCopyMarkdown) btnCopyMarkdown.classList.remove('hidden');
+    if (btnPushDigestChannel) btnPushDigestChannel.classList.remove('hidden');
 }
 
-if (btnFeishuPush) {
-    btnFeishuPush.addEventListener('click', async function () {
+if (btnCopyMarkdown) {
+    btnCopyMarkdown.addEventListener('click', async function () {
+        if (!lastSlackSummary) {
+            showStatus('没有可复制的内容', 'error');
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(lastSlackSummary);
+            btnCopyMarkdown.textContent = '✅ 已复制';
+            setTimeout(() => { btnCopyMarkdown.textContent = '📋 复制 Markdown'; }, 2000);
+        } catch (e) {
+            // Fallback for non-HTTPS
+            const ta = document.createElement('textarea');
+            ta.value = lastSlackSummary;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            btnCopyMarkdown.textContent = '✅ 已复制';
+            setTimeout(() => { btnCopyMarkdown.textContent = '📋 复制 Markdown'; }, 2000);
+        }
+    });
+}
+
+if (btnPushDigestChannel) {
+    btnPushDigestChannel.addEventListener('click', async function () {
         if (!lastSlackSummary) {
             showStatus('没有可推送的摘要内容', 'error');
             return;
         }
-        const chName = channelSelect.options[channelSelect.selectedIndex]?.textContent || 'Slack 摘要';
-        btnFeishuPush.disabled = true;
-        btnFeishuPush.innerHTML = '<span class="spinner"></span>推送中...';
+        const wsId = workspaceSelect.value;
+        if (!wsId) {
+            showStatus('请先选择一个工作区', 'error');
+            return;
+        }
+        btnPushDigestChannel.disabled = true;
+        btnPushDigestChannel.innerHTML = '<span class="spinner"></span>推送中...';
         try {
-            const resp = await fetch('/api/feishu/push', {
+            const resp = await fetch('/api/slack/push-digest', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: lastSlackSummary, title: `💬 ${chName}` }),
+                body: JSON.stringify({
+                    content: lastSlackSummary,
+                    workspace_id: wsId,
+                    title: 'Workspace Daily Digest',
+                }),
             });
             const result = await resp.json();
             showStatus(result.message, result.ok ? 'success' : 'error');
         } catch (e) {
             showStatus('推送失败: ' + e.message, 'error');
         } finally {
-            btnFeishuPush.disabled = false;
-            btnFeishuPush.textContent = '🐦 推送到飞书';
+            btnPushDigestChannel.disabled = false;
+            btnPushDigestChannel.textContent = '📨 推送到 #slack-summary';
         }
     });
 }
@@ -498,64 +546,158 @@ if (btnFeishuPushHistory) {
     });
 }
 
-// --- Slack Push ---
+// --- Workspace Digest ---
 
-if (btnSlackPush) {
-    btnSlackPush.addEventListener('click', async function () {
-        if (!lastSlackSummary) {
-            showStatus('没有可推送的摘要内容', 'error');
+const btnWorkspaceDigest = document.getElementById('btn-workspace-digest');
+const wsChannelStats = document.getElementById('ws-channel-stats');
+const wsChannelStatsList = document.getElementById('ws-channel-stats-list');
+
+function runWorkspaceDigest() {
+    const wsId = workspaceSelect.value;
+    if (!wsId) {
+        showStatus('请选择一个工作区', 'info');
+        return;
+    }
+
+    hideStatus();
+    clearProgressLog();
+    btnWorkspaceDigest.disabled = true;
+    btnWorkspaceDigest.innerHTML = '<span class="spinner"></span>生成日报中...';
+    btnSlackRun.disabled = true;
+    slackMessagesSection.classList.add('hidden');
+    slackDigestSection.classList.add('hidden');
+    wsChannelStats.classList.add('hidden');
+    wsChannelStatsList.innerHTML = '';
+
+    let url;
+    if (selectedRange === 'last-week') {
+        const range = getLastWeekRange();
+        url = `/api/slack/workspace-digest/stream?workspace_id=${encodeURIComponent(wsId)}&start_date=${range.start}&end_date=${range.end}&lang=${selectedLang}`;
+    } else if (selectedRange === 'yesterday') {
+        const range = getYesterdayRange();
+        url = `/api/slack/workspace-digest/stream?workspace_id=${encodeURIComponent(wsId)}&start_date=${range.start}&end_date=${range.end}&lang=${selectedLang}`;
+    } else {
+        url = `/api/slack/workspace-digest/stream?workspace_id=${encodeURIComponent(wsId)}&days=${selectedDays}&lang=${selectedLang}`;
+    }
+
+    const es = new EventSource(url);
+
+    es.onmessage = function (e) {
+        let event;
+        try {
+            event = JSON.parse(e.data);
+        } catch {
             return;
         }
-        const chName = channelSelect.options[channelSelect.selectedIndex]?.textContent || 'Slack 摘要';
-        btnSlackPush.disabled = true;
-        btnSlackPush.innerHTML = '<span class="spinner"></span>推送中...';
-        try {
-            const resp = await fetch('/api/slack/push', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: lastSlackSummary, title: `💬 ${chName}` }),
-            });
-            const result = await resp.json();
-            showStatus(result.message, result.ok ? 'success' : 'error');
-        } catch (e) {
-            showStatus('推送失败: ' + e.message, 'error');
-        } finally {
-            btnSlackPush.disabled = false;
-            btnSlackPush.textContent = '💬 推送到 Slack';
+
+        if (event.type === 'progress') {
+            appendProgressItem('progress', event.message);
+        } else if (event.type === 'retry') {
+            appendProgressItem('retry', event.message);
+        } else if (event.type === 'channels_loaded') {
+            markProgressComplete();
+            appendProgressItem('done', '频道消息获取完成，开始生成日报...');
+            renderChannelStats(event.data);
+            btnWorkspaceDigest.innerHTML = '<span class="spinner"></span>LLM 生成中...';
+        } else if (event.type === 'error') {
+            appendProgressItem('error', event.message);
+            markProgressComplete();
+            showStatus(event.message, 'error');
+            es.close();
+            resetWorkspaceButton();
+        } else if (event.type === 'done') {
+            markProgressComplete();
+            appendProgressItem('done', '日报生成成功！');
+            es.close();
+            let dateRangeLabel;
+            if (selectedRange === 'last-week') {
+                const range = getLastWeekRange();
+                dateRangeLabel = `${range.start} ~ ${range.end}`;
+            } else if (selectedRange === 'yesterday') {
+                const range = getYesterdayRange();
+                dateRangeLabel = `${range.start}`;
+            } else {
+                const endDate = new Date();
+                const startDate = new Date();
+                startDate.setDate(endDate.getDate() - (selectedDays - 1));
+                dateRangeLabel = `${startDate.toISOString().slice(0, 10)} ~ ${endDate.toISOString().slice(0, 10)}`;
+            }
+            renderWorkspaceDigest(event.data, dateRangeLabel);
+            lastSlackSummary = event.data.summary || '';
+            showPushButtons();
+            showStatus('日报生成完成！', 'success');
+            resetWorkspaceButton();
         }
-    });
+    };
+
+    es.onerror = function () {
+        es.close();
+        markProgressComplete();
+        appendProgressItem('error', '连接中断，请重试');
+        showStatus('连接中断', 'error');
+        resetWorkspaceButton();
+    };
 }
 
-// --- Slack Push (history) ---
+function resetWorkspaceButton() {
+    btnWorkspaceDigest.disabled = false;
+    btnWorkspaceDigest.textContent = '📋 全频道日报';
+    btnSlackRun.disabled = false;
+}
 
-const btnSlackPushHistory = document.getElementById('btn-slack-push-history');
-if (btnSlackPushHistory) {
-    btnSlackPushHistory.addEventListener('click', async function () {
-        if (!lastHistorySummary) {
-            showStatus('没有可推送的摘要内容', 'error');
-            return;
-        }
-        btnSlackPushHistory.disabled = true;
-        btnSlackPushHistory.innerHTML = '<span class="spinner"></span>推送中...';
-        try {
-            const resp = await fetch('/api/slack/push', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: lastHistorySummary, title: '💬 历史 Slack 摘要' }),
-            });
-            const result = await resp.json();
-            showStatus(result.message, result.ok ? 'success' : 'error');
-        } catch (e) {
-            showStatus('推送失败: ' + e.message, 'error');
-        } finally {
-            btnSlackPushHistory.disabled = false;
-            btnSlackPushHistory.textContent = '💬 推送到 Slack';
-        }
-    });
+function renderChannelStats(data) {
+    wsChannelStats.classList.remove('hidden');
+    const channels = data.channels || [];
+    if (channels.length === 0) {
+        wsChannelStatsList.innerHTML = '<span style="color:#718096;">无活跃频道</span>';
+        return;
+    }
+    wsChannelStatsList.innerHTML = channels.map(ch => {
+        const threadInfo = ch.thread_count > 0 ? ` / ${ch.thread_count} 🧵` : '';
+        return `<span class="gh-label" style="font-size:0.82rem;">#${escapeHtml(ch.name)} <strong>${ch.message_count}</strong> 💬${threadInfo}</span>`;
+    }).join('');
+    // Add summary line
+    const summaryEl = document.createElement('div');
+    summaryEl.style.cssText = 'width:100%;margin-top:6px;font-size:0.83rem;color:#718096;';
+    summaryEl.textContent = `共 ${data.active_channels} 个活跃频道，${data.total_messages} 条消息，跳过 ${data.skipped_empty} 个空频道`;
+    wsChannelStatsList.appendChild(summaryEl);
+}
+
+function renderWorkspaceDigest(data, dateRangeLabel) {
+    slackDigestSection.classList.remove('hidden');
+    const titleEl = document.getElementById('slack-digest-title');
+    const ws = workspacesData.find(w => w.id === workspaceSelect.value);
+    const wsName = ws ? ws.name : '工作区';
+    if (titleEl) {
+        titleEl.textContent = dateRangeLabel
+            ? `📋 ${wsName} 全频道日报（${dateRangeLabel}）`
+            : `📋 ${wsName} 全频道日报`;
+    }
+    slackDigestContent.innerHTML = renderMarkdown(data.summary);
+    let metaHtml = '';
+    if (dateRangeLabel) {
+        metaHtml += `<span>📅 数据范围: ${dateRangeLabel}</span>`;
+    }
+    if (data.generated_at) {
+        const genTime = new Date(data.generated_at).toLocaleString('zh-CN');
+        if (metaHtml) metaHtml += `<span style="margin-left:16px;">⏱️ 生成于 ${genTime}</span>`;
+        else metaHtml += `<span>⏱️ 生成于 ${genTime}</span>`;
+    }
+    if (data.stats) {
+        const s = data.stats;
+        metaHtml += `<span style="margin-left:16px;">💬 ${s.total_messages || 0} 条消息</span>`;
+        metaHtml += `<span style="margin-left:16px;">📊 ${s.active_channels || 0} 个活跃频道</span>`;
+    }
+    if (metaHtml) {
+        slackDigestContent.innerHTML += `<p style="color:#718096;font-size:0.85rem;margin-top:12px;">${metaHtml}</p>`;
+    }
 }
 
 // --- Event listeners ---
 btnSlackRun.addEventListener('click', runCombinedFlow);
+if (btnWorkspaceDigest) {
+    btnWorkspaceDigest.addEventListener('click', runWorkspaceDigest);
+}
 
 // --- Init ---
 loadWorkspaces();
