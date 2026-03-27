@@ -1,0 +1,12 @@
+{
+  "slack": {
+    "token": "xoxp-your-slack-user-token",
+    "workspace_name": "ApacheDoris"
+  },
+  "github": {
+    "repo_url": "git@github.com:selectdb/slack-repo.git",
+    "local_dir": "/Users/morningman/workspace/git/slack-repo",
+    "branch": "master",
+    "sub_dir": "slack-reports"
+  }
+}
